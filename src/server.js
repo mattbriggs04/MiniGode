@@ -1,0 +1,302 @@
+import { createReadStream, existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  createAppError,
+  createRoom,
+  getBootstrapPayload,
+  getRoomState,
+  joinRoom,
+  postChatMessage,
+  startRoom,
+  subscribeToRoom,
+  submitAnswer,
+  toggleEndVote,
+  takeSwing
+} from "./services/roomService.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDirectory = path.resolve(__dirname, "../public");
+const aceDirectory = path.resolve(__dirname, "../node_modules/ace-builds/src-noconflict");
+
+const MIME_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png"
+};
+
+function sendJson(response, statusCode, payload) {
+  response.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8"
+  });
+  response.end(JSON.stringify(payload));
+}
+
+function sendError(response, error) {
+  if (response.headersSent) {
+    if (!response.writableEnded) {
+      response.end();
+    }
+    return;
+  }
+
+  const statusCode = error?.statusCode ?? 500;
+  const message = statusCode >= 500 ? "Internal server error." : error.message;
+  sendJson(response, statusCode, { error: message });
+}
+
+function parseRoomCode(pathname) {
+  return pathname.split("/")[3];
+}
+
+async function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 250_000) {
+        reject(createAppError("Request body too large.", 413));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    request.on("end", () => {
+      if (chunks.length === 0) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        reject(createAppError("Invalid JSON body.", 400));
+      }
+    });
+
+    request.on("error", (error) => reject(error));
+  });
+}
+
+async function serveStaticFile(requestPath, response) {
+  return serveFileFromDirectory(publicDirectory, requestPath === "/" ? "/index.html" : requestPath, response);
+}
+
+async function serveFileFromDirectory(baseDirectory, requestPath, response) {
+  const filePath = path.resolve(baseDirectory, `.${requestPath}`);
+
+  if (!filePath.startsWith(baseDirectory)) {
+    throw createAppError("Not found.", 404);
+  }
+
+  if (!existsSync(filePath)) {
+    throw createAppError("Not found.", 404);
+  }
+
+  const fileStat = await stat(filePath);
+  if (!fileStat.isFile()) {
+    throw createAppError("Not found.", 404);
+  }
+
+  response.writeHead(200, {
+    "Content-Type": MIME_TYPES[path.extname(filePath)] ?? "application/octet-stream",
+    "Content-Length": fileStat.size
+  });
+  createReadStream(filePath).pipe(response);
+}
+
+const server = http.createServer(async (request, response) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+
+  try {
+    if (request.method === "GET" && url.pathname === "/api/health") {
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/bootstrap") {
+      sendJson(response, 200, getBootstrapPayload());
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/start$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = startRoom({ roomCode, playerId: body.playerId });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/end$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = toggleEndVote({ roomCode, playerId: body.playerId });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/chat$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = postChatMessage({ roomCode, playerId: body.playerId, message: body.message });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/rooms") {
+      const body = await readJsonBody(request);
+      const result = createRoom(body);
+      sendJson(response, 201, result);
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/join$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = joinRoom({ roomCode, ...body });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/rooms\/[^/]+$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const playerId = url.searchParams.get("playerId");
+      sendJson(response, 200, getRoomState({ roomCode, playerId }));
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/rooms\/[^/]+\/events$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const playerId = url.searchParams.get("playerId");
+      getRoomState({ roomCode, playerId });
+
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+
+      subscribeToRoom({ roomCode, playerId, response });
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/submit$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = submitAnswer({
+        roomCode,
+        playerId: body.playerId,
+        submission: body.code
+      });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/swing$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = takeSwing({
+        roomCode,
+        playerId: body.playerId,
+        angle: body.angle,
+        power: body.power
+      });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/")) {
+      throw createAppError("Not found.", 404);
+    }
+
+    if (url.pathname.startsWith("/vendor/ace/")) {
+      await serveFileFromDirectory(aceDirectory, url.pathname.replace("/vendor/ace", ""), response);
+      return;
+    }
+
+    await serveStaticFile(url.pathname, response);
+  } catch (error) {
+    sendError(response, error);
+  }
+});
+
+const DEFAULT_PORT = 3000;
+const MAX_PORT_FALLBACKS = 10;
+
+function parseRequestedPort(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`Invalid PORT value: ${value}`);
+  }
+
+  return port;
+}
+
+function logListeningPort(preferredPort, actualPort) {
+  if (actualPort !== preferredPort) {
+    console.log(`Port ${preferredPort} was busy, using http://localhost:${actualPort} instead`);
+    return;
+  }
+
+  console.log(`MiniGode server listening on http://localhost:${actualPort}`);
+}
+
+function startServer(preferredPort, allowFallback) {
+  let candidatePort = preferredPort;
+
+  const tryListen = () => {
+    server.once("error", handleError);
+    server.once("listening", handleListening);
+    server.listen(candidatePort);
+  };
+
+  const cleanup = () => {
+    server.removeListener("error", handleError);
+    server.removeListener("listening", handleListening);
+  };
+
+  const handleListening = () => {
+    cleanup();
+    const address = server.address();
+    const actualPort = typeof address === "object" && address ? address.port : candidatePort;
+    logListeningPort(preferredPort, actualPort);
+  };
+
+  const handleError = (error) => {
+    cleanup();
+
+    if (error.code === "EADDRINUSE" && allowFallback && candidatePort < preferredPort + MAX_PORT_FALLBACKS) {
+      candidatePort += 1;
+      tryListen();
+      return;
+    }
+
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${candidatePort} is already in use. Set PORT to an open port and retry.`);
+      process.exit(1);
+      return;
+    }
+
+    throw error;
+  };
+
+  tryListen();
+}
+
+const requestedPort = parseRequestedPort(process.env.PORT);
+const preferredPort = requestedPort ?? DEFAULT_PORT;
+
+startServer(preferredPort, requestedPort === null);

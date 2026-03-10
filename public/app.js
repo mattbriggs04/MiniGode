@@ -201,7 +201,10 @@ function createShell() {
 
                   <div class="editor-controls">
                     <select id="editor-theme-select" aria-label="Editor theme"></select>
-                    <button id="run-tests-btn" type="button" class="primary">Run tests</button>
+                    <div class="editor-controls__actions">
+                      <button id="problem-to-golf-btn" type="button" class="course-switch-button">Go to course</button>
+                      <button id="run-tests-btn" type="button" class="primary">Run tests</button>
+                    </div>
                   </div>
                   <div id="editor-terminal" class="editor-terminal"></div>
                 </section>
@@ -289,6 +292,7 @@ function createShell() {
     challengeScreen: document.getElementById("challenge-screen"),
     problemPanel: document.getElementById("problem-panel"),
     editorThemeSelect: document.getElementById("editor-theme-select"),
+    problemToGolfButton: document.getElementById("problem-to-golf-btn"),
     runTestsButton: document.getElementById("run-tests-btn"),
     editorTerminal: document.getElementById("editor-terminal"),
     golfScreen: document.getElementById("golf-screen"),
@@ -323,6 +327,7 @@ function createShell() {
   elements.copyRoomButton.addEventListener("click", copyRoomCode);
   elements.runTestsButton.addEventListener("click", onSubmitSolution);
   elements.editorThemeSelect.addEventListener("change", onEditorThemeChange);
+  elements.problemToGolfButton.addEventListener("click", () => setGameScreen("golf"));
   elements.courseCanvas.addEventListener("click", onCourseClick);
   elements.modeToggleButton.addEventListener("click", onToggleColorMode);
   elements.chatToggleButton.addEventListener("click", () => setChatOpen(true));
@@ -379,14 +384,20 @@ function saveEditorTheme() {
   saveStorage(EDITOR_THEME_KEY, state.editorTheme);
 }
 
-function getColorModeButtonLabel() {
-  return state.colorMode === "dark" ? "Light mode" : "Dark mode";
+function getColorModeButtonIcon() {
+  return state.colorMode === "dark" ? "☀" : "☾";
+}
+
+function getColorModeButtonHint() {
+  return state.colorMode === "dark" ? "Switch to light mode" : "Switch to dark mode";
 }
 
 function applyColorMode() {
   document.body.classList.toggle("theme-dark", state.colorMode === "dark");
   document.body.classList.toggle("theme-light", state.colorMode !== "dark");
-  elements.modeToggleButton.textContent = getColorModeButtonLabel();
+  elements.modeToggleButton.textContent = getColorModeButtonIcon();
+  elements.modeToggleButton.setAttribute("aria-label", getColorModeButtonHint());
+  elements.modeToggleButton.setAttribute("title", getColorModeButtonHint());
 }
 
 function onToggleColorMode() {
@@ -721,7 +732,6 @@ function renderProblemPanel() {
         <p class="panel-kicker">Current problem</p>
         <h2>${escapeHtml(question.title)}</h2>
       </div>
-      <button id="problem-to-golf-btn" type="button" class="ghost-inline">Go to course</button>
     </div>
 
     <section class="problem-section">
@@ -740,14 +750,13 @@ function renderProblemPanel() {
       </div>
     </section>
   `;
-
-  document.getElementById("problem-to-golf-btn")?.addEventListener("click", () => setGameScreen("golf"));
 }
 
 function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
   elements.editorThemeSelect.value = theme.id;
   elements.runTestsButton.disabled = state.busy || !state.editorReady;
+  elements.problemToGolfButton.disabled = state.busy;
   renderEditorTerminal();
 
   void initializeEditor()

@@ -20,13 +20,16 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDirectory = path.resolve(__dirname, "../public");
-const aceDirectory = path.resolve(__dirname, "../node_modules/ace-builds/src-noconflict");
+const monacoDirectory = path.resolve(__dirname, "../node_modules/monaco-editor/min");
 
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".ttf": "font/ttf",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
   ".svg": "image/svg+xml",
   ".png": "image/png"
 };
@@ -218,8 +221,8 @@ const server = http.createServer(async (request, response) => {
       throw createAppError("Not found.", 404);
     }
 
-    if (url.pathname.startsWith("/vendor/ace/")) {
-      await serveFileFromDirectory(aceDirectory, url.pathname.replace("/vendor/ace", ""), response);
+    if (url.pathname.startsWith("/vendor/monaco/")) {
+      await serveFileFromDirectory(monacoDirectory, url.pathname.replace("/vendor/monaco", ""), response);
       return;
     }
 

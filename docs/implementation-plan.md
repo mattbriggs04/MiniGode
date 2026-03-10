@@ -106,7 +106,7 @@ Notes:
 - `src/python/runner.py`
   Add the Python-side execution harness.
 - `public/app.js`
-  Rebuild room rendering around waiting-room state, gameplay mode switching, and Ace editor integration.
+  Rebuild room rendering around waiting-room state, gameplay mode switching, and Monaco editor integration.
 - `public/courseRenderer.js`
   Stabilize canvas sizing and keep golf rendering isolated to golf mode.
 - `public/styles.css`

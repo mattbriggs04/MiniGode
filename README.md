@@ -1,6 +1,6 @@
 # MiniGode
 
-MiniGode is a multiplayer browser game where players solve coding questions to earn golf swings. Correct solutions unlock one shot at the course. The first player to hole out wins the room.
+MiniGode (/ˈmɪni ɡoʊd/) is a multiplayer browser game where players solve coding questions to earn golf swings. Correct solutions unlock one shot at the course. The first player to hole out wins the room.
 
 ## Tech stack
 
@@ -10,7 +10,7 @@ The current MVP uses a Node.js backend plus a browser client:
 - Server-Sent Events for room updates
 - In-memory room state
 - Python 3 question evaluation via a local runner process
-- Ace Editor for the in-browser Python editor
+- Monaco Editor for the in-browser Python editor
 - Canvas-based mini-golf rendering
 
 Python 3 is required locally for question evaluation.

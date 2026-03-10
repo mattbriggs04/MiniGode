@@ -12,6 +12,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "ace-builds": "^1.43.6"
+    "monaco-editor": "^0.55.1"
   }
 }

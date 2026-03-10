@@ -1,0 +1,135 @@
+[
+  {
+    "id": "contains-duplicate",
+    "slug": "contains-duplicate",
+    "title": "Contains Duplicate",
+    "difficulty": "easy",
+    "tags": ["array", "hash-table"],
+    "statement": [
+      "Given an integer array `nums`, return `True` if any value appears at least twice in the array.",
+      "Return `False` when every element in the array is distinct."
+    ],
+    "constraints": [
+      "1 <= len(nums) <= 100000",
+      "-1000000000 <= nums[i] <= 1000000000"
+    ],
+    "examples": [
+      {
+        "input": "nums = [1, 2, 3, 1]",
+        "output": "True",
+        "explanation": "The value 1 appears twice."
+      },
+      {
+        "input": "nums = [1, 2, 3, 4]",
+        "output": "False",
+        "explanation": "Every value is unique."
+      }
+    ],
+    "signature": {
+      "functionName": "contains_duplicate",
+      "parameters": [
+        { "name": "nums", "type": "list[int]" }
+      ],
+      "returnType": "bool"
+    },
+    "starterCode": "def contains_duplicate(nums: list[int]) -> bool:\n    pass\n",
+    "publicTests": [
+      { "args": [[1, 2, 3, 1]], "expected": true, "description": "duplicate near the end" },
+      { "args": [[1, 2, 3, 4]], "expected": false, "description": "all unique" }
+    ],
+    "hiddenTests": [
+      { "args": [[5, 5, 5, 5]], "expected": true, "description": "every value repeats" },
+      { "args": [[-4, -2, 0, 7]], "expected": false, "description": "negative values can still be unique" },
+      { "args": [[42]], "expected": false, "description": "single element arrays are unique" }
+    ]
+  },
+  {
+    "id": "valid-anagram",
+    "slug": "valid-anagram",
+    "title": "Valid Anagram",
+    "difficulty": "easy",
+    "tags": ["string", "hash-table", "sorting"],
+    "statement": [
+      "Given two strings `s` and `t`, return `True` if `t` is an anagram of `s`.",
+      "An anagram uses every character from the original string exactly once."
+    ],
+    "constraints": [
+      "0 <= len(s), len(t) <= 50000",
+      "Both strings contain lowercase English letters."
+    ],
+    "examples": [
+      {
+        "input": "s = \"anagram\", t = \"nagaram\"",
+        "output": "True",
+        "explanation": "Both strings contain the same letters with the same counts."
+      },
+      {
+        "input": "s = \"rat\", t = \"car\"",
+        "output": "False",
+        "explanation": "The strings differ in at least one character."
+      }
+    ],
+    "signature": {
+      "functionName": "is_anagram",
+      "parameters": [
+        { "name": "s", "type": "str" },
+        { "name": "t", "type": "str" }
+      ],
+      "returnType": "bool"
+    },
+    "starterCode": "def is_anagram(s: str, t: str) -> bool:\n    pass\n",
+    "publicTests": [
+      { "args": ["anagram", "nagaram"], "expected": true, "description": "same multiset of characters" },
+      { "args": ["rat", "car"], "expected": false, "description": "different letters" }
+    ],
+    "hiddenTests": [
+      { "args": ["listen", "silent"], "expected": true, "description": "reordered word" },
+      { "args": ["aacc", "ccac"], "expected": false, "description": "character counts must match" },
+      { "args": ["", ""], "expected": true, "description": "empty strings are anagrams" }
+    ]
+  },
+  {
+    "id": "best-time-to-buy-and-sell-stock",
+    "slug": "best-time-to-buy-and-sell-stock",
+    "title": "Best Time to Buy and Sell Stock",
+    "difficulty": "easy",
+    "tags": ["array", "dynamic-programming"],
+    "statement": [
+      "You are given an array `prices` where `prices[i]` is the price of a stock on day `i`.",
+      "Choose one day to buy and a later day to sell. Return the maximum profit you can achieve. If no profit is possible, return `0`."
+    ],
+    "constraints": [
+      "1 <= len(prices) <= 100000",
+      "0 <= prices[i] <= 10000"
+    ],
+    "examples": [
+      {
+        "input": "prices = [7, 1, 5, 3, 6, 4]",
+        "output": "5",
+        "explanation": "Buy on day 2 at price 1 and sell on day 5 at price 6."
+      },
+      {
+        "input": "prices = [7, 6, 4, 3, 1]",
+        "output": "0",
+        "explanation": "Prices never rise after a buy."
+      }
+    ],
+    "signature": {
+      "functionName": "max_profit",
+      "parameters": [
+        { "name": "prices", "type": "list[int]" }
+      ],
+      "returnType": "int"
+    },
+    "starterCode": "def max_profit(prices: list[int]) -> int:\n    pass\n",
+    "publicTests": [
+      { "args": [[7, 1, 5, 3, 6, 4]], "expected": 5, "description": "profit in the middle of the list" },
+      { "args": [[7, 6, 4, 3, 1]], "expected": 0, "description": "strictly decreasing prices" }
+    ],
+    "hiddenTests": [
+      { "args": [[2, 4, 1]], "expected": 2, "description": "best trade happens early" },
+      { "args": [[3, 3, 5, 0, 0, 3, 1, 4]], "expected": 4, "description": "buy after a plateau" },
+      { "args": [[1]], "expected": 0, "description": "cannot sell without a later day" }
+    ]
+  }
+]

@@ -15,6 +15,20 @@ const SOLUTIONS = {
   contains_duplicate: `def contains_duplicate(nums):
     return len(set(nums)) != len(nums)
 `,
+  is_anagram: `def is_anagram(s, t):
+    if len(s) != len(t):
+        return False
+    counts = {}
+    for char in s:
+        counts[char] = counts.get(char, 0) + 1
+    for char in t:
+        if char not in counts:
+            return False
+        counts[char] -= 1
+        if counts[char] < 0:
+            return False
+    return all(value == 0 for value in counts.values())
+`,
   max_profit: `def max_profit(prices):
     minimum = float("inf")
     best = 0
@@ -22,12 +36,6 @@ const SOLUTIONS = {
         minimum = min(minimum, price)
         best = max(best, price - minimum)
     return best
-`,
-  climb_stairs: `def climb_stairs(n):
-    a, b = 1, 1
-    for _ in range(n):
-        a, b = b, a + b
-    return a
 `,
   product_except_self: `def product_except_self(nums):
     output = [1] * len(nums)

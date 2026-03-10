@@ -91,6 +91,14 @@ function formatDifficulty(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
 }
 
+function formatSignature(signature) {
+  const parameters = signature.parameters
+    .map((parameter) => `${parameter.name}: ${parameter.type}`)
+    .join(", ");
+
+  return `def ${signature.functionName}(${parameters}) -> ${signature.returnType}`;
+}
+
 function createShell() {
   const root = document.getElementById("app");
   root.innerHTML = `
@@ -735,19 +743,59 @@ function renderProblemPanel() {
     </div>
 
     <section class="problem-section">
-      <p class="problem-prompt">${escapeHtml(question.prompt)}</p>
       <div class="problem-meta">
         <span>${formatDifficulty(question.difficulty)}</span>
-        <span>Python 3</span>
-        <span>${escapeHtml(question.functionName)}</span>
+        ${question.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
+      </div>
+    </section>
+
+    <section class="problem-section">
+      <h3>Function Signature</h3>
+      <div class="problem-signature">
+        <code>${escapeHtml(formatSignature(question.signature))}</code>
+      </div>
+    </section>
+
+    <section class="problem-section">
+      <h3>Statement</h3>
+      <div class="problem-body">
+        ${question.statement.map((paragraph) => `<p class="problem-prompt">${escapeHtml(paragraph)}</p>`).join("")}
       </div>
     </section>
 
     <section class="problem-section">
       <h3>Examples</h3>
       <div class="example-list">
-        ${question.examples.map((example) => `<code>${escapeHtml(example)}</code>`).join("")}
+        ${question.examples
+          .map(
+            (example, index) => `
+              <article class="example-card">
+                <h4>Example ${index + 1}</h4>
+                <div class="example-row">
+                  <span>Input</span>
+                  <code>${escapeHtml(example.input)}</code>
+                </div>
+                <div class="example-row">
+                  <span>Output</span>
+                  <code>${escapeHtml(example.output)}</code>
+                </div>
+                ${
+                  example.explanation
+                    ? `<p class="example-explanation">${escapeHtml(example.explanation)}</p>`
+                    : ""
+                }
+              </article>
+            `
+          )
+          .join("")}
       </div>
+    </section>
+
+    <section class="problem-section">
+      <h3>Constraints</h3>
+      <ul class="constraint-list">
+        ${question.constraints.map((constraint) => `<li>${escapeHtml(constraint)}</li>`).join("")}
+      </ul>
     </section>
   `;
 }

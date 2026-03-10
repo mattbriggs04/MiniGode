@@ -42,15 +42,26 @@ function buildFailure(message, totalTests = 0) {
   };
 }
 
+function getRuntimeTests(question) {
+  return [
+    ...question.publicTests.map((test) => ({ ...test, visibility: "shown" })),
+    ...question.hiddenTests.map((test) => ({ ...test, visibility: "hidden" }))
+  ];
+}
+
 export function sanitizeQuestion(question) {
-  const tests = decorateTests(question.tests);
+  const tests = decorateTests(getRuntimeTests(question));
 
   return {
     id: question.id,
+    slug: question.slug,
     difficulty: question.difficulty,
     title: question.title,
-    prompt: question.prompt,
-    functionName: question.functionName,
+    statement: question.statement,
+    constraints: question.constraints,
+    tags: question.tags,
+    signature: question.signature,
+    functionName: question.signature.functionName,
     starterCode: question.starterCode,
     examples: question.examples,
     testCases: tests.map((test) => ({
@@ -64,9 +75,9 @@ export function sanitizeQuestion(question) {
 }
 
 export function evaluateSubmission(question, submission) {
-  const tests = decorateTests(question.tests);
+  const tests = decorateTests(getRuntimeTests(question));
   const payload = JSON.stringify({
-    functionName: question.functionName,
+    functionName: question.signature.functionName,
     submission: String(submission ?? ""),
     tests
   });
@@ -80,23 +91,23 @@ export function evaluateSubmission(question, submission) {
 
   if (result.error) {
     if (result.error.code === "ETIMEDOUT") {
-      return buildFailure("Execution timed out.", question.tests.length);
+      return buildFailure("Execution timed out.", tests.length);
     }
 
-    return buildFailure(`Python runner failed: ${result.error.message}`, question.tests.length);
+    return buildFailure(`Python runner failed: ${result.error.message}`, tests.length);
   }
 
   if (result.status !== 0) {
     const stderr = result.stderr?.trim();
     return buildFailure(
       stderr ? `Python runner failed: ${stderr}` : "Python runner failed.",
-      question.tests.length
+      tests.length
     );
   }
 
   try {
     return JSON.parse(result.stdout);
   } catch {
-    return buildFailure("Python runner returned invalid output.", question.tests.length);
+    return buildFailure("Python runner returned invalid output.", tests.length);
   }
 }

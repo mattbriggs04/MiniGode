@@ -1,0 +1,136 @@
+[
+  {
+    "id": "product-of-array-except-self",
+    "slug": "product-of-array-except-self",
+    "title": "Product of Array Except Self",
+    "difficulty": "medium",
+    "tags": ["array", "prefix-sum"],
+    "statement": [
+      "Given an integer array `nums`, return an array `answer` such that `answer[i]` is equal to the product of every number in `nums` except `nums[i]`.",
+      "Solve the problem without using division."
+    ],
+    "constraints": [
+      "2 <= len(nums) <= 100000",
+      "-30 <= nums[i] <= 30",
+      "The product of any prefix or suffix fits in a 32-bit integer."
+    ],
+    "examples": [
+      {
+        "input": "nums = [1, 2, 3, 4]",
+        "output": "[24, 12, 8, 6]"
+      },
+      {
+        "input": "nums = [-1, 1, 0, -3, 3]",
+        "output": "[0, 0, 9, 0, 0]",
+        "explanation": "The single zero makes every other position zero."
+      }
+    ],
+    "signature": {
+      "functionName": "product_except_self",
+      "parameters": [
+        { "name": "nums", "type": "list[int]" }
+      ],
+      "returnType": "list[int]"
+    },
+    "starterCode": "def product_except_self(nums: list[int]) -> list[int]:\n    pass\n",
+    "publicTests": [
+      { "args": [[1, 2, 3, 4]], "expected": [24, 12, 8, 6], "description": "basic increasing values" },
+      { "args": [[-1, 1, 0, -3, 3]], "expected": [0, 0, 9, 0, 0], "description": "contains a zero" }
+    ],
+    "hiddenTests": [
+      { "args": [[2, 3]], "expected": [3, 2], "description": "smallest valid array" },
+      { "args": [[0, 0]], "expected": [0, 0], "description": "multiple zeros" },
+      { "args": [[5, 1, 4, 2]], "expected": [8, 40, 10, 20], "description": "mixed magnitudes" }
+    ]
+  },
+  {
+    "id": "longest-substring-without-repeating-characters",
+    "slug": "longest-substring-without-repeating-characters",
+    "title": "Longest Substring Without Repeating Characters",
+    "difficulty": "medium",
+    "tags": ["string", "sliding-window"],
+    "statement": [
+      "Given a string `s`, return the length of the longest substring without repeating characters.",
+      "A substring is a contiguous block of characters."
+    ],
+    "constraints": [
+      "0 <= len(s) <= 50000",
+      "`s` may contain letters, digits, symbols, and spaces."
+    ],
+    "examples": [
+      {
+        "input": "s = \"abcabcbb\"",
+        "output": "3",
+        "explanation": "The substring \"abc\" has no repeated characters."
+      },
+      {
+        "input": "s = \"bbbbb\"",
+        "output": "1",
+        "explanation": "The best substring is any single \"b\"."
+      }
+    ],
+    "signature": {
+      "functionName": "length_of_longest_substring",
+      "parameters": [
+        { "name": "s", "type": "str" }
+      ],
+      "returnType": "int"
+    },
+    "starterCode": "def length_of_longest_substring(s: str) -> int:\n    pass\n",
+    "publicTests": [
+      { "args": ["abcabcbb"], "expected": 3, "description": "window must move forward on repeat" },
+      { "args": ["bbbbb"], "expected": 1, "description": "all characters repeat" }
+    ],
+    "hiddenTests": [
+      { "args": ["pwwkew"], "expected": 3, "description": "repeat splits the window" },
+      { "args": [""], "expected": 0, "description": "empty strings have length zero" },
+      { "args": ["dvdf"], "expected": 3, "description": "best substring can skip an early repeat" }
+    ]
+  },
+  {
+    "id": "daily-temperatures",
+    "slug": "daily-temperatures",
+    "title": "Daily Temperatures",
+    "difficulty": "medium",
+    "tags": ["array", "stack", "monotonic-stack"],
+    "statement": [
+      "Given a list of daily temperatures, return an array where each position tells you how many days you must wait to get a warmer temperature.",
+      "If there is no future day with a warmer temperature, the answer for that position is `0`."
+    ],
+    "constraints": [
+      "1 <= len(temperatures) <= 100000",
+      "30 <= temperatures[i] <= 100"
+    ],
+    "examples": [
+      {
+        "input": "temperatures = [73, 74, 75, 71, 69, 72, 76, 73]",
+        "output": "[1, 1, 4, 2, 1, 1, 0, 0]"
+      },
+      {
+        "input": "temperatures = [30, 40, 50, 60]",
+        "output": "[1, 1, 1, 0]"
+      }
+    ],
+    "signature": {
+      "functionName": "daily_temperatures",
+      "parameters": [
+        { "name": "temperatures", "type": "list[int]" }
+      ],
+      "returnType": "list[int]"
+    },
+    "starterCode": "def daily_temperatures(temperatures: list[int]) -> list[int]:\n    pass\n",
+    "publicTests": [
+      {
+        "args": [[73, 74, 75, 71, 69, 72, 76, 73]],
+        "expected": [1, 1, 4, 2, 1, 1, 0, 0],
+        "description": "mixed temperatures"
+      },
+      { "args": [[30, 40, 50, 60]], "expected": [1, 1, 1, 0], "description": "strictly increasing sequence" }
+    ],
+    "hiddenTests": [
+      { "args": [[30, 60, 90]], "expected": [1, 1, 0], "description": "short rising run" },
+      { "args": [[90, 80, 70]], "expected": [0, 0, 0], "description": "no warmer day exists" },
+      { "args": [[70]], "expected": [0], "description": "single-day forecast" }
+    ]
+  }
+]

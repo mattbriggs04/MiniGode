@@ -15,6 +15,8 @@ The current MVP uses a Node.js backend plus a browser client:
 
 Python 3 is required locally for question evaluation.
 
+Question content is authored as structured JSON catalogs in [`src/data/question-bank/`](/Users/matthew/Projects/MiniGode/src/data/question-bank), then validated and loaded by [`src/data/questions.js`](/Users/matthew/Projects/MiniGode/src/data/questions.js).
+
 The revised UI and backend plan is documented in [docs/implementation-plan.md](/Users/matthew/Projects/MiniGode/docs/implementation-plan.md).
 
 The full implementation plan is in [docs/stack-plan.md](/Users/matthew/Projects/MiniGode/docs/stack-plan.md).

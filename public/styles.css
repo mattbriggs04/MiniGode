@@ -14,9 +14,13 @@
   --shadow: 0 24px 80px rgba(5, 11, 8, 0.22);
   --gameplay-bg: #f3efe6;
   --gameplay-problem-bg: #f7f3ea;
-  --gameplay-editor-bg: #fcfaf5;
+  --gameplay-editor-bg: #eef3ef;
   --gameplay-side-bg: #f7f3ea;
   --gameplay-border: rgba(27, 36, 31, 0.08);
+  --editor-shell-bg: #eef3ef;
+  --editor-toolbar-bg: #e5eee8;
+  --editor-toolbar-text: #20352c;
+  --editor-border: #d3dfd8;
   --terminal-bg: #edf4ef;
   --terminal-text: #17211c;
   --terminal-muted: rgba(23, 33, 28, 0.56);
@@ -84,9 +88,13 @@ body.theme-dark {
   --outline: rgba(236, 244, 239, 0.14);
   --gameplay-bg: #0d1512;
   --gameplay-problem-bg: #111b17;
-  --gameplay-editor-bg: #0d1411;
+  --gameplay-editor-bg: #0a110e;
   --gameplay-side-bg: #111b17;
   --gameplay-border: rgba(236, 244, 239, 0.08);
+  --editor-shell-bg: #0a110e;
+  --editor-toolbar-bg: #101914;
+  --editor-toolbar-text: #e4f3ed;
+  --editor-border: #183127;
   --terminal-bg: #101714;
   --terminal-text: #ecf4ef;
   --terminal-muted: rgba(236, 244, 239, 0.58);
@@ -542,8 +550,15 @@ label {
 
 .editor-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto minmax(260px, auto);
+  grid-template-rows: minmax(0, 1fr) auto minmax(240px, 31vh);
   gap: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.editor-workspace {
+  min-height: 0;
+  background: var(--editor-shell-bg);
 }
 
 .editor-controls {
@@ -552,42 +567,49 @@ label {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
-  padding: 14px 22px;
-  border-top: 1px solid rgba(19, 39, 30, 0.08);
-  border-bottom: 1px solid rgba(19, 39, 30, 0.08);
-  background: rgba(19, 39, 30, 0.03);
+  padding: 10px 18px;
+  border-top: 1px solid var(--editor-border);
+  border-bottom: 1px solid var(--editor-border);
+  background: var(--editor-toolbar-bg);
+  color: var(--editor-toolbar-text);
 }
 
 .editor-controls select {
   min-width: 160px;
   width: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface);
 }
 
 .editor-controls .primary {
   margin-top: 0;
+  padding: 10px 16px;
+  border-radius: 12px;
 }
 
 .code-editor {
   width: 100%;
+  height: 100%;
   min-height: 56vh;
-  padding: 18px 0;
   overflow: hidden;
   border: none;
 }
 
-.ace_editor,
-.ace_editor * {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace !important;
+.monaco-editor,
+.monaco-editor * {
+  font-family: "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, monospace !important;
 }
 
 .editor-terminal {
   display: grid;
   gap: 14px;
   min-height: 280px;
-  padding: 18px;
+  padding: 16px 18px 18px;
   border: none;
   background: var(--terminal-bg);
   color: var(--terminal-text);
+  overflow: auto;
 }
 
 .editor-terminal .panel-kicker,

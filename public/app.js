@@ -9,15 +9,11 @@ import {
   voteToEndRoom
 } from "./api.js";
 import { CourseRenderer } from "./courseRenderer.js";
+import { createEditorController, EDITOR_THEMES, getEditorTheme } from "./editorController.js";
 
 const SESSION_KEY = "minigode-session";
 const EDITOR_THEME_KEY = "minigode-editor-theme";
 const COLOR_MODE_KEY = "minigode-color-mode";
-const EDITOR_THEMES = [
-  { id: "midnight", label: "Midnight", ace: "ace/theme/tomorrow_night" },
-  { id: "paper", label: "Paper", ace: "ace/theme/github" },
-  { id: "forest", label: "Forest", ace: "ace/theme/merbivore_soft" }
-];
 
 const state = {
   bootstrap: null,
@@ -33,6 +29,7 @@ const state = {
   chatDraft: "",
   chatNotice: null,
   chatOpen: false,
+  editorReady: false,
   colorMode: loadStorage(COLOR_MODE_KEY) ?? "light",
   gameScreen: "challenge",
   editorTheme: loadStorage(EDITOR_THEME_KEY) ?? EDITOR_THEMES[0].id,
@@ -92,10 +89,6 @@ function formatTestValue(value) {
 
 function formatDifficulty(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
-}
-
-function getTheme(themeId) {
-  return EDITOR_THEMES.find((theme) => theme.id === themeId) ?? EDITOR_THEMES[0];
 }
 
 function createShell() {
@@ -202,7 +195,9 @@ function createShell() {
                 <aside id="problem-panel" class="panel problem-panel"></aside>
 
                 <section class="panel editor-panel">
-                  <div id="code-editor" class="code-editor"></div>
+                  <div class="editor-workspace">
+                    <div id="code-editor" class="code-editor"></div>
+                  </div>
 
                   <div class="editor-controls">
                     <select id="editor-theme-select" aria-label="Editor theme"></select>
@@ -339,70 +334,22 @@ function createShell() {
 
 function initializeEditor() {
   if (codeEditor) {
-    return;
+    codeEditor.setSubmitHandler(onSubmitSolution);
+    codeEditor.setChangeHandler((value) => {
+      state.codeDraft = value;
+    });
+    return codeEditor.ensureReady();
   }
 
-  if (!window.ace) {
-    throw new Error("Ace editor failed to load.");
-  }
-
-  window.ace.config.set("basePath", "/vendor/ace");
-  window.ace.config.set("loadWorkerFromBlob", false);
-
-  codeEditor = window.ace.edit("code-editor");
-  codeEditor.session.setMode("ace/mode/python");
-  codeEditor.session.setUseSoftTabs(true);
-  codeEditor.session.setTabSize(4);
-  codeEditor.session.setUseWrapMode(true);
-  codeEditor.setShowPrintMargin(false);
-  codeEditor.setHighlightActiveLine(true);
-  codeEditor.setBehavioursEnabled(true);
-  codeEditor.renderer.setPadding(0);
-  codeEditor.renderer.setScrollMargin(16, 16, 0, 0);
-  codeEditor.setOptions({
-    enableBasicAutocompletion: true,
-    enableLiveAutocompletion: true,
-    enableSnippets: true,
-    fontSize: "15px",
-    scrollPastEnd: 0.25,
-    useWorker: false,
-    wrapBehavioursEnabled: true
-  });
-
-  const defaultTheme = getTheme(state.editorTheme);
-  codeEditor.setTheme(defaultTheme.ace);
-
-  codeEditor.commands.addCommand({
-    name: "softTabBackspace",
-    bindKey: { win: "Backspace", mac: "Backspace" },
-    exec(editor) {
-      const selection = editor.getSelectionRange();
-      if (!selection.isEmpty()) {
-        editor.remove("left");
-        return;
-      }
-
-      const cursor = editor.getCursorPosition();
-      const line = editor.session.getLine(cursor.row);
-      const before = line.slice(0, cursor.column);
-      const inLeadingWhitespace = before.trim().length === 0;
-
-      if (cursor.column >= 4 && cursor.column % 4 === 0 && inLeadingWhitespace && before.endsWith("    ")) {
-        editor.session.remove({
-          start: { row: cursor.row, column: cursor.column - 4 },
-          end: { row: cursor.row, column: cursor.column }
-        });
-        return;
-      }
-
-      editor.remove("left");
+  codeEditor = createEditorController({
+    elementId: "code-editor",
+    onChange(value) {
+      state.codeDraft = value;
     },
-    readOnly: false
+    onSubmit: onSubmitSolution
   });
 
-  codeEditor.session.on("change", () => {
-    state.codeDraft = codeEditor.getValue();
-  });
+  return codeEditor.ensureReady();
 }
 
 function setEditorValue(value) {
@@ -415,8 +362,7 @@ function setEditorValue(value) {
     return;
   }
 
-  codeEditor.setValue(nextValue, -1);
-  codeEditor.clearSelection();
+  void codeEditor.setValue(nextValue);
 }
 
 function setNotice(message) {
@@ -754,7 +700,7 @@ function renderEditorTerminal() {
     <div class="terminal-header">
       <div>
         <p class="panel-kicker">Test results</p>
-        <h4>Testcase Terminal</h4>
+        <h4>Tests</h4>
       </div>
     </div>
 
@@ -799,15 +745,30 @@ function renderProblemPanel() {
 }
 
 function renderEditor() {
-  initializeEditor();
-  const theme = getTheme(state.editorTheme);
-
+  const theme = getEditorTheme(state.editorTheme);
   elements.editorThemeSelect.value = theme.id;
-  codeEditor.setTheme(theme.ace);
-  setEditorValue(state.codeDraft);
-  codeEditor.resize(true);
-  elements.runTestsButton.disabled = state.busy;
+  elements.runTestsButton.disabled = state.busy || !state.editorReady;
   renderEditorTerminal();
+
+  void initializeEditor()
+    .then(async () => {
+      await codeEditor.setTheme(theme.id);
+      await codeEditor.setValue(state.codeDraft);
+      state.editorReady = true;
+      elements.runTestsButton.disabled = state.busy;
+      codeEditor.layout();
+    })
+    .catch((error) => {
+      state.editorReady = false;
+      state.evaluation = {
+        passed: false,
+        message: error.message,
+        testsPassed: 0,
+        totalTests: 0,
+        results: []
+      };
+      renderEditorTerminal();
+    });
 }
 
 function renderGolfControls() {
@@ -898,7 +859,7 @@ function renderGame() {
   } else {
     renderProblemPanel();
     renderEditor();
-    requestAnimationFrame(() => codeEditor?.resize(true));
+    requestAnimationFrame(() => codeEditor?.layout());
   }
 }
 
@@ -990,7 +951,7 @@ async function onStartGame() {
 }
 
 async function onSubmitSolution() {
-  if (!state.session || state.busy) {
+  if (!state.session || state.busy || !state.editorReady) {
     return;
   }
 
@@ -998,7 +959,8 @@ async function onSubmitSolution() {
   elements.runTestsButton.disabled = true;
 
   try {
-    const response = await submitSolution(state.session.roomCode, state.session.playerId, codeEditor.getValue());
+    const sourceCode = codeEditor?.getValue() ?? state.codeDraft;
+    const response = await submitSolution(state.session.roomCode, state.session.playerId, sourceCode);
     state.evaluation = response.evaluation;
     applyRoomState(response.state);
   } catch (error) {
@@ -1074,7 +1036,11 @@ function onCourseClick(event) {
 function onEditorThemeChange(event) {
   state.editorTheme = event.target.value;
   saveEditorTheme();
-  renderEditor();
+  if (!codeEditor) {
+    return;
+  }
+
+  void codeEditor.setTheme(state.editorTheme);
 }
 
 async function copyRoomCode() {
@@ -1128,6 +1094,7 @@ function leaveRoom({ notice = null } = {}) {
   state.chatDraft = "";
   state.chatNotice = null;
   state.chatOpen = false;
+  state.editorReady = false;
   state.gameScreen = "challenge";
   saveStorage(SESSION_KEY, null);
   setEditorValue("");

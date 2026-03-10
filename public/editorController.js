@@ -161,6 +161,27 @@ export function getEditorTheme(themeId) {
   return EDITOR_THEMES.find((theme) => theme.id === themeId) ?? EDITOR_THEMES[0];
 }
 
+function getPreferredCursorPosition(value) {
+  const lines = String(value ?? "").split("\n");
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const passColumn = line.indexOf("pass");
+
+    if (passColumn >= 0) {
+      return {
+        lineNumber: index + 1,
+        column: passColumn + 1
+      };
+    }
+  }
+
+  return {
+    lineNumber: 1,
+    column: 1
+  };
+}
+
 export function createEditorController({ elementId, onChange, onSubmit }) {
   let editor;
   let monacoRef;
@@ -242,7 +263,6 @@ export function createEditorController({ elementId, onChange, onSubmit }) {
         run: () => submitHandler?.()
       });
 
-      changeHandler?.(editor.getValue());
       return editor;
     });
 
@@ -262,8 +282,9 @@ export function createEditorController({ elementId, onChange, onSubmit }) {
 
       suppressChange = true;
       editor.setValue(nextText);
-      editor.setPosition({ lineNumber: 1, column: 1 });
-      editor.revealPositionInCenter({ lineNumber: 1, column: 1 });
+      const nextPosition = getPreferredCursorPosition(nextText);
+      editor.setPosition(nextPosition);
+      editor.revealPositionInCenter(nextPosition);
       suppressChange = false;
     },
     getValue() {

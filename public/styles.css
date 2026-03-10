@@ -11,6 +11,13 @@
   --accent-dark: #d95739;
   --surface: rgba(255, 255, 255, 0.72);
   --outline: rgba(19, 39, 30, 0.12);
+  --field-text: #20985b;
+  --field-placeholder: rgba(32, 152, 91, 0.54);
+  --field-focus-border: rgba(37, 188, 109, 0.82);
+  --field-focus-glow: 0 0 0 1px rgba(37, 188, 109, 0.32), 0 0 28px rgba(37, 188, 109, 0.24);
+  --glow-soft: 0 0 26px rgba(43, 161, 92, 0.12);
+  --glow-panel: 0 22px 70px rgba(5, 11, 8, 0.2), 0 0 36px rgba(43, 161, 92, 0.1);
+  --glow-button: 0 14px 28px rgba(18, 88, 53, 0.2), 0 0 18px rgba(43, 161, 92, 0.16);
   --shadow: 0 24px 80px rgba(5, 11, 8, 0.22);
   --gameplay-bg: #f3efe6;
   --gameplay-problem-bg: #f7f3ea;
@@ -78,6 +85,18 @@ body::before {
   pointer-events: none;
 }
 
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(96, 255, 178, 0.08), transparent 24%),
+    radial-gradient(circle at 84% 16%, rgba(96, 255, 178, 0.06), transparent 18%),
+    radial-gradient(circle at 74% 78%, rgba(255, 107, 74, 0.07), transparent 22%);
+  pointer-events: none;
+  opacity: 0.95;
+}
+
 body.theme-dark {
   --bg-0: #040b08;
   --bg-1: #08120f;
@@ -89,6 +108,13 @@ body.theme-dark {
   --panel-kicker: rgba(236, 244, 239, 0.54);
   --surface: rgba(255, 255, 255, 0.08);
   --outline: rgba(236, 244, 239, 0.14);
+  --field-text: #86ffbe;
+  --field-placeholder: rgba(134, 255, 190, 0.56);
+  --field-focus-border: rgba(96, 255, 178, 0.84);
+  --field-focus-glow: 0 0 0 1px rgba(96, 255, 178, 0.4), 0 0 32px rgba(96, 255, 178, 0.26);
+  --glow-soft: 0 0 28px rgba(96, 255, 178, 0.16);
+  --glow-panel: 0 24px 80px rgba(1, 6, 4, 0.44), 0 0 42px rgba(96, 255, 178, 0.1);
+  --glow-button: 0 16px 32px rgba(1, 8, 5, 0.42), 0 0 24px rgba(96, 255, 178, 0.18);
   --gameplay-bg: #08120f;
   --gameplay-problem-bg: #0a1410;
   --gameplay-editor-bg: #08120f;
@@ -149,7 +175,48 @@ select {
   border-radius: 16px;
   border: 1px solid var(--outline);
   background: var(--surface);
-  color: var(--text);
+  color: var(--field-text);
+  outline: none;
+  box-shadow: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+textarea {
+  color: var(--field-text);
+  outline: none;
+  box-shadow: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--field-placeholder);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--field-text);
+  caret-color: var(--field-text);
+  border: 1px solid var(--outline);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+  transition: background-color 9999s ease-out 0s;
+}
+
+input:focus,
+input:focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: var(--field-focus-glow);
+  border-color: var(--field-focus-border);
+  background: color-mix(in srgb, var(--surface) 88%, rgba(96, 255, 178, 0.12));
 }
 
 .app-shell {
@@ -214,7 +281,7 @@ select {
   border: 1px solid var(--panel-border);
   border-radius: 24px;
   padding: 22px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), var(--glow-panel);
   backdrop-filter: blur(10px);
 }
 
@@ -244,6 +311,7 @@ select {
   border-radius: 18px;
   background: rgba(18, 41, 31, 0.06);
   border: 1px solid rgba(18, 41, 31, 0.08);
+  box-shadow: 0 12px 28px rgba(5, 11, 8, 0.04);
 }
 
 .intro-steps strong {
@@ -282,7 +350,7 @@ label {
 .primary {
   background: var(--accent);
   color: #fff6f1;
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.14);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.14), var(--glow-button);
 }
 
 .primary:hover {
@@ -307,6 +375,7 @@ label {
   background: rgba(19, 39, 30, 0.08);
   color: var(--text);
   border: 1px solid rgba(19, 39, 30, 0.12);
+  box-shadow: 0 10px 22px rgba(5, 11, 8, 0.04);
 }
 
 .ghost-inline {
@@ -495,6 +564,17 @@ label {
   line-height: 1.65;
 }
 
+.problem-inline-code {
+  display: inline-block;
+  padding: 0.12rem 0.44rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(19, 39, 30, 0.1);
+  background: rgba(19, 39, 30, 0.07);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+  line-height: 1.4;
+}
+
 .problem-meta {
   display: flex;
   flex-wrap: wrap;
@@ -502,31 +582,55 @@ label {
   margin-top: 14px;
 }
 
-.problem-meta span,
+.difficulty-pill,
 .test-chip {
   padding: 7px 10px;
   border-radius: 999px;
   font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid transparent;
 }
 
-.problem-meta span {
-  background: rgba(19, 39, 30, 0.08);
+.difficulty-pill--easy {
+  color: #177245;
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.32);
 }
 
-.problem-signature {
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(19, 39, 30, 0.08);
-  border: 1px solid rgba(19, 39, 30, 0.08);
+.difficulty-pill--medium {
+  color: #a85700;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.34);
 }
 
-.problem-signature code {
-  display: block;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.84rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
+.difficulty-pill--hard {
+  color: #c2410c;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+body.theme-dark .problem-inline-code {
+  border-color: rgba(236, 244, 239, 0.1);
+  background: rgba(236, 244, 239, 0.06);
+  color: #e8f6ef;
+}
+
+body.theme-dark .difficulty-pill--easy {
+  color: #86ffbe;
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(134, 255, 190, 0.28);
+}
+
+body.theme-dark .difficulty-pill--medium {
+  color: #ffd27a;
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(255, 210, 122, 0.26);
+}
+
+body.theme-dark .difficulty-pill--hard {
+  color: #ff9c88;
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(255, 156, 136, 0.24);
 }
 
 .example-list {
@@ -643,11 +747,16 @@ label {
   color: var(--editor-toolbar-text);
 }
 
+.editor-controls__prefs,
 .editor-controls__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.editor-controls__prefs {
+  flex: 1 1 auto;
 }
 
 .editor-controls select {
@@ -658,6 +767,7 @@ label {
   background: var(--surface);
 }
 
+.editor-reset-button,
 .editor-controls .primary {
   margin-top: 0;
   padding: 10px 16px;
@@ -671,7 +781,7 @@ label {
   border: 1px solid rgba(143, 216, 180, 0.18);
   background: linear-gradient(135deg, #143126, #21493a);
   color: #e8f6ef;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 20px rgba(4, 11, 8, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--glow-button);
 }
 
 .course-switch-button:hover {
@@ -694,8 +804,16 @@ label {
 }
 
 .monaco-editor,
-.monaco-editor * {
+.monaco-editor .view-lines,
+.monaco-editor .view-line,
+.monaco-editor .mtk,
+.monaco-editor .inputarea {
   font-family: "Cascadia Code", "Fira Code", "SFMono-Regular", Consolas, monospace !important;
+}
+
+.monaco-editor .codicon,
+.monaco-editor .codicon[class*="codicon-"] {
+  font-family: codicon !important;
 }
 
 .editor-terminal {
@@ -840,7 +958,7 @@ label {
   background: var(--chat-toggle-bg);
   color: var(--chat-toggle-text);
   border: 1px solid var(--chat-toggle-border);
-  box-shadow: 0 20px 40px rgba(5, 11, 8, 0.28);
+  box-shadow: 0 20px 40px rgba(5, 11, 8, 0.28), var(--glow-button);
 }
 
 .chat-toggle--mode {
@@ -850,6 +968,13 @@ label {
   padding: 0;
   font-size: 1.2rem;
   line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.mode-toggle-icon {
+  display: block;
+  transform: translateY(1px);
 }
 
 .chat-panel {
@@ -967,7 +1092,7 @@ label {
 }
 
 .chat-form textarea::placeholder {
-  color: var(--chat-panel-muted);
+  color: var(--field-placeholder);
 }
 
 .golf-layout {
@@ -1088,10 +1213,12 @@ label {
     justify-content: stretch;
   }
 
+  .editor-controls__prefs,
   .editor-controls__actions {
     width: 100%;
   }
 
+  .editor-controls__prefs > *,
   .editor-controls__actions > button {
     flex: 1 1 0;
   }

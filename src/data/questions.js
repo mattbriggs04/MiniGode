@@ -64,6 +64,14 @@ function validateQuestion(question, expectedDifficulty) {
     `${question.id} signature.returnType must be provided.`
   );
   assertQuestion(
+    question.starterCode.includes("class Solution:"),
+    `${question.id} starterCode must include class Solution.`
+  );
+  assertQuestion(
+    question.starterCode.includes(`def ${question.signature.functionName}(self`),
+    `${question.id} starterCode must define Solution.${question.signature.functionName}.`
+  );
+  assertQuestion(
     Array.isArray(question.publicTests) && question.publicTests.length > 0,
     `${question.id} must include at least one public test.`
   );

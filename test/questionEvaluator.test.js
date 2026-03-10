@@ -18,8 +18,9 @@ test("evaluateSubmission passes a correct solution", () => {
   const question = getQuestionById("contains-duplicate");
   const result = evaluateSubmission(
     question,
-    `def contains_duplicate(nums):
-    return len(set(nums)) != len(nums)
+    `class Solution:
+    def contains_duplicate(self, nums):
+        return len(set(nums)) != len(nums)
 `
   );
 
@@ -33,18 +34,19 @@ test("evaluateSubmission passes a correct solution", () => {
 
 test("evaluateSubmission surfaces compile errors", () => {
   const question = getQuestionById("valid-anagram");
-  const result = evaluateSubmission(question, "def nope():\n    return 1\n");
+  const result = evaluateSubmission(question, "class Solution:\n    def nope(self):\n        return 1\n");
 
   assert.equal(result.passed, false);
-  assert.match(result.message, /Expected a function named is_anagram/);
+  assert.match(result.message, /Expected Solution\.is_anagram/);
 });
 
 test("evaluateSubmission reports failing tests", () => {
   const question = getQuestionById("daily-temperatures");
   const result = evaluateSubmission(
     question,
-    `def daily_temperatures(temperatures):
-    return []
+    `class Solution:
+    def daily_temperatures(self, temperatures):
+        return []
 `
   );
 

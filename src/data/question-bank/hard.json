@@ -30,7 +30,7 @@
       ],
       "returnType": "int"
     },
-    "starterCode": "def trap_rain_water(height: list[int]) -> int:\n    pass\n",
+    "starterCode": "class Solution:\n    def trap_rain_water(self, height: list[int]) -> int:\n        pass\n",
     "publicTests": [
       {
         "args": [[0, 1, 0, 2, 1, 0, 1, 3, 2, 1, 2, 1]],
@@ -78,7 +78,7 @@
       ],
       "returnType": "str"
     },
-    "starterCode": "def min_window(s: str, t: str) -> str:\n    pass\n",
+    "starterCode": "class Solution:\n    def min_window(self, s: str, t: str) -> str:\n        pass\n",
     "publicTests": [
       { "args": ["ADOBECODEBANC", "ABC"], "expected": "BANC", "description": "classic sample" },
       { "args": ["a", "a"], "expected": "a", "description": "single-character match" }

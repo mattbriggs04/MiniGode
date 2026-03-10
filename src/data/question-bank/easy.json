@@ -32,7 +32,7 @@
       ],
       "returnType": "bool"
     },
-    "starterCode": "def contains_duplicate(nums: list[int]) -> bool:\n    pass\n",
+    "starterCode": "class Solution:\n    def contains_duplicate(self, nums: list[int]) -> bool:\n        pass\n",
     "publicTests": [
       { "args": [[1, 2, 3, 1]], "expected": true, "description": "duplicate near the end" },
       { "args": [[1, 2, 3, 4]], "expected": false, "description": "all unique" }
@@ -77,7 +77,7 @@
       ],
       "returnType": "bool"
     },
-    "starterCode": "def is_anagram(s: str, t: str) -> bool:\n    pass\n",
+    "starterCode": "class Solution:\n    def is_anagram(self, s: str, t: str) -> bool:\n        pass\n",
     "publicTests": [
       { "args": ["anagram", "nagaram"], "expected": true, "description": "same multiset of characters" },
       { "args": ["rat", "car"], "expected": false, "description": "different letters" }
@@ -121,7 +121,7 @@
       ],
       "returnType": "int"
     },
-    "starterCode": "def max_profit(prices: list[int]) -> int:\n    pass\n",
+    "starterCode": "class Solution:\n    def max_profit(self, prices: list[int]) -> int:\n        pass\n",
     "publicTests": [
       { "args": [[7, 1, 5, 3, 6, 4]], "expected": 5, "description": "profit in the middle of the list" },
       { "args": [[7, 6, 4, 3, 1]], "expected": 0, "description": "strictly decreasing prices" }

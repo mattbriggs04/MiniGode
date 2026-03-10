@@ -1,8 +1,10 @@
+import builtins
 import json
 import sys
 
 
 SAFE_BUILTINS = {
+    "__build_class__": builtins.__build_class__,
     "abs": abs,
     "all": all,
     "any": any,
@@ -49,7 +51,7 @@ def display_input(args):
 
 def main():
     payload = json.loads(sys.stdin.read())
-    globals_dict = {"__builtins__": SAFE_BUILTINS}
+    globals_dict = {"__builtins__": SAFE_BUILTINS, "__name__": "__submission__"}
     locals_dict = globals_dict
 
     try:
@@ -68,14 +70,45 @@ def main():
         )
         return
 
+    solution_class = locals_dict.get("Solution")
+    if not isinstance(solution_class, type):
+        print(
+            json.dumps(
+                {
+                    "passed": False,
+                    "message": "Compile error: Expected a class named Solution.",
+                    "testsPassed": 0,
+                    "totalTests": len(payload["tests"]),
+                    "results": [],
+                }
+            )
+        )
+        return
+
+    try:
+        solution = solution_class()
+    except Exception as error:
+        print(
+            json.dumps(
+                {
+                    "passed": False,
+                    "message": f"Compile error: Could not instantiate Solution: {error}",
+                    "testsPassed": 0,
+                    "totalTests": len(payload["tests"]),
+                    "results": [],
+                }
+            )
+        )
+        return
+
     function_name = payload["functionName"]
-    function = locals_dict.get(function_name)
+    function = getattr(solution, function_name, None)
     if not callable(function):
         print(
             json.dumps(
                 {
                     "passed": False,
-                    "message": f"Compile error: Expected a function named {function_name}.",
+                    "message": f"Compile error: Expected Solution.{function_name}.",
                     "testsPassed": 0,
                     "totalTests": len(payload["tests"]),
                     "results": [],

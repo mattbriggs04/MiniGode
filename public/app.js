@@ -29,6 +29,7 @@ const state = {
   chatDraft: "",
   chatNotice: null,
   chatOpen: false,
+  copyRoomLabel: null,
   editorReady: false,
   colorMode: loadStorage(COLOR_MODE_KEY) ?? "light",
   gameScreen: "challenge",
@@ -43,6 +44,7 @@ const state = {
 let elements;
 let renderer;
 let codeEditor;
+let copyRoomFeedbackTimer;
 
 function loadStorage(key) {
   try {
@@ -71,6 +73,21 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function formatInlineCode(value) {
+  const source = String(value ?? "");
+  const segments = source.split(/(`[^`]+`)/g);
+
+  return segments
+    .map((segment) => {
+      if (segment.startsWith("`") && segment.endsWith("`") && segment.length >= 2) {
+        return `<code class="problem-inline-code">${escapeHtml(segment.slice(1, -1))}</code>`;
+      }
+
+      return escapeHtml(segment);
+    })
+    .join("");
+}
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -89,14 +106,6 @@ function formatTestValue(value) {
 
 function formatDifficulty(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
-}
-
-function formatSignature(signature) {
-  const parameters = signature.parameters
-    .map((parameter) => `${parameter.name}: ${parameter.type}`)
-    .join(", ");
-
-  return `def ${signature.functionName}(${parameters}) -> ${signature.returnType}`;
 }
 
 function createShell() {
@@ -135,7 +144,7 @@ function createShell() {
             <h2>Open a lobby</h2>
             <label>
               Your name
-              <input name="name" maxlength="24" placeholder="Ada" required>
+              <input name="name" maxlength="24" placeholder="username" required>
             </label>
             <label>
               Difficulty
@@ -153,7 +162,7 @@ function createShell() {
             <h2>Enter a room key</h2>
             <label>
               Your name
-              <input name="name" maxlength="24" placeholder="Grace" required>
+              <input name="name" maxlength="24" placeholder="username" required>
             </label>
             <label>
               Room key
@@ -208,7 +217,10 @@ function createShell() {
                   </div>
 
                   <div class="editor-controls">
-                    <select id="editor-theme-select" aria-label="Editor theme"></select>
+                    <div class="editor-controls__prefs">
+                      <select id="editor-theme-select" aria-label="Editor theme"></select>
+                      <button id="reset-code-btn" type="button" class="course-switch-button editor-reset-button">Reset code</button>
+                    </div>
                     <div class="editor-controls__actions">
                       <button id="problem-to-golf-btn" type="button" class="course-switch-button">Go to course</button>
                       <button id="run-tests-btn" type="button" class="primary">Run tests</button>
@@ -300,6 +312,7 @@ function createShell() {
     challengeScreen: document.getElementById("challenge-screen"),
     problemPanel: document.getElementById("problem-panel"),
     editorThemeSelect: document.getElementById("editor-theme-select"),
+    resetCodeButton: document.getElementById("reset-code-btn"),
     problemToGolfButton: document.getElementById("problem-to-golf-btn"),
     runTestsButton: document.getElementById("run-tests-btn"),
     editorTerminal: document.getElementById("editor-terminal"),
@@ -335,6 +348,7 @@ function createShell() {
   elements.copyRoomButton.addEventListener("click", copyRoomCode);
   elements.runTestsButton.addEventListener("click", onSubmitSolution);
   elements.editorThemeSelect.addEventListener("change", onEditorThemeChange);
+  elements.resetCodeButton.addEventListener("click", onResetCode);
   elements.problemToGolfButton.addEventListener("click", () => setGameScreen("golf"));
   elements.courseCanvas.addEventListener("click", onCourseClick);
   elements.modeToggleButton.addEventListener("click", onToggleColorMode);
@@ -403,7 +417,7 @@ function getColorModeButtonHint() {
 function applyColorMode() {
   document.body.classList.toggle("theme-dark", state.colorMode === "dark");
   document.body.classList.toggle("theme-light", state.colorMode !== "dark");
-  elements.modeToggleButton.textContent = getColorModeButtonIcon();
+  elements.modeToggleButton.innerHTML = `<span class="mode-toggle-icon" aria-hidden="true">${getColorModeButtonIcon()}</span>`;
   elements.modeToggleButton.setAttribute("aria-label", getColorModeButtonHint());
   elements.modeToggleButton.setAttribute("title", getColorModeButtonHint());
 }
@@ -601,6 +615,7 @@ function renderWaitingRoom() {
   elements.waitingRoomCode.textContent = state.room.code;
   elements.waitingSubtitle.textContent = `${formatDifficulty(state.room.difficulty)} Python room • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
   elements.waitingPlayerList.innerHTML = state.room.players.map(waitingPlayerMarkup).join("");
+  elements.copyRoomButton.textContent = state.copyRoomLabel ?? "Copy room key";
   elements.waitingSettings.innerHTML = `
     <div class="setting-row"><span>Difficulty</span><strong>${formatDifficulty(state.room.difficulty)}</strong></div>
     <div class="setting-row"><span>Language</span><strong>${escapeHtml(state.room.questionLanguage)}</strong></div>
@@ -744,22 +759,14 @@ function renderProblemPanel() {
 
     <section class="problem-section">
       <div class="problem-meta">
-        <span>${formatDifficulty(question.difficulty)}</span>
-        ${question.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}
-      </div>
-    </section>
-
-    <section class="problem-section">
-      <h3>Function Signature</h3>
-      <div class="problem-signature">
-        <code>${escapeHtml(formatSignature(question.signature))}</code>
+        <span class="difficulty-pill difficulty-pill--${escapeHtml(question.difficulty)}">${formatDifficulty(question.difficulty)}</span>
       </div>
     </section>
 
     <section class="problem-section">
       <h3>Statement</h3>
       <div class="problem-body">
-        ${question.statement.map((paragraph) => `<p class="problem-prompt">${escapeHtml(paragraph)}</p>`).join("")}
+        ${question.statement.map((paragraph) => `<p class="problem-prompt">${formatInlineCode(paragraph)}</p>`).join("")}
       </div>
     </section>
 
@@ -781,7 +788,7 @@ function renderProblemPanel() {
                 </div>
                 ${
                   example.explanation
-                    ? `<p class="example-explanation">${escapeHtml(example.explanation)}</p>`
+                    ? `<p class="example-explanation">${formatInlineCode(example.explanation)}</p>`
                     : ""
                 }
               </article>
@@ -794,7 +801,7 @@ function renderProblemPanel() {
     <section class="problem-section">
       <h3>Constraints</h3>
       <ul class="constraint-list">
-        ${question.constraints.map((constraint) => `<li>${escapeHtml(constraint)}</li>`).join("")}
+        ${question.constraints.map((constraint) => `<li>${formatInlineCode(constraint)}</li>`).join("")}
       </ul>
     </section>
   `;
@@ -803,6 +810,7 @@ function renderProblemPanel() {
 function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
   elements.editorThemeSelect.value = theme.id;
+  elements.resetCodeButton.disabled = state.busy || !state.editorReady;
   elements.runTestsButton.disabled = state.busy || !state.editorReady;
   elements.problemToGolfButton.disabled = state.busy;
   renderEditorTerminal();
@@ -812,6 +820,7 @@ function renderEditor() {
       await codeEditor.setTheme(theme.id);
       await codeEditor.setValue(state.codeDraft);
       state.editorReady = true;
+      elements.resetCodeButton.disabled = state.busy;
       elements.runTestsButton.disabled = state.busy;
       codeEditor.layout();
     })
@@ -861,7 +870,7 @@ function renderGolfControls() {
     </div>
 
     <button id="swing-btn" type="button" class="primary">Take swing</button>
-    <button id="golf-to-problem-btn" type="button" class="secondary">Back to problem</button>
+    <button id="golf-to-problem-btn" type="button" class="course-switch-button">Back to problem</button>
   `;
 
   const angleInput = document.getElementById("angle-input");
@@ -1100,6 +1109,24 @@ function onEditorThemeChange(event) {
   void codeEditor.setTheme(state.editorTheme);
 }
 
+function onResetCode() {
+  if (!state.me?.currentQuestion || state.busy) {
+    return;
+  }
+
+  state.codeDraft = state.me.currentQuestion.starterCode;
+  state.evaluation = null;
+  renderEditorTerminal();
+
+  if (!codeEditor) {
+    return;
+  }
+
+  void codeEditor.setValue(state.codeDraft).then(() => {
+    codeEditor.focus();
+  });
+}
+
 async function copyRoomCode() {
   if (!state.room) {
     return;
@@ -1107,9 +1134,57 @@ async function copyRoomCode() {
 
   try {
     await navigator.clipboard.writeText(state.room.code);
-    elements.waitingStatus.textContent = `Room key ${state.room.code} copied to clipboard.`;
+    state.copyRoomLabel = "Copied!";
   } catch {
-    elements.waitingStatus.textContent = `Room key: ${state.room.code}`;
+    state.copyRoomLabel = "Copy failed";
+  }
+
+  renderWaitingRoom();
+
+  clearTimeout(copyRoomFeedbackTimer);
+  copyRoomFeedbackTimer = window.setTimeout(() => {
+    state.copyRoomLabel = null;
+    if (getCurrentStage() === "waiting" && state.room && state.me) {
+      renderWaitingRoom();
+    }
+  }, 2200);
+}
+
+function clearCopyRoomFeedback() {
+  clearTimeout(copyRoomFeedbackTimer);
+  copyRoomFeedbackTimer = undefined;
+  state.copyRoomLabel = null;
+}
+
+function onRoomLifecycleReset() {
+  clearCopyRoomFeedback();
+  state.codeDraft = "";
+  state.activeQuestionId = null;
+  state.evaluation = null;
+  state.busy = false;
+  state.chatBusy = false;
+  state.chatDraft = "";
+  state.chatNotice = null;
+  state.chatOpen = false;
+  state.editorReady = false;
+  state.gameScreen = "challenge";
+}
+
+function leaveRoom({ notice = null } = {}) {
+  state.eventSource?.close();
+  state.eventSource = null;
+  state.room = null;
+  state.me = null;
+  state.session = null;
+  onRoomLifecycleReset();
+  saveStorage(SESSION_KEY, null);
+  setEditorValue("");
+  renderViews();
+
+  if (notice) {
+    setNotice(notice);
+  } else {
+    clearNotice();
   }
 }
 
@@ -1134,33 +1209,6 @@ async function onSendChatMessage(event) {
   } finally {
     state.chatBusy = false;
     renderChatDock();
-  }
-}
-
-function leaveRoom({ notice = null } = {}) {
-  state.eventSource?.close();
-  state.eventSource = null;
-  state.room = null;
-  state.me = null;
-  state.session = null;
-  state.codeDraft = "";
-  state.activeQuestionId = null;
-  state.evaluation = null;
-  state.busy = false;
-  state.chatBusy = false;
-  state.chatDraft = "";
-  state.chatNotice = null;
-  state.chatOpen = false;
-  state.editorReady = false;
-  state.gameScreen = "challenge";
-  saveStorage(SESSION_KEY, null);
-  setEditorValue("");
-  renderViews();
-
-  if (notice) {
-    setNotice(notice);
-  } else {
-    clearNotice();
   }
 }
 

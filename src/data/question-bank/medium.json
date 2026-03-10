@@ -32,7 +32,7 @@
       ],
       "returnType": "list[int]"
     },
-    "starterCode": "def product_except_self(nums: list[int]) -> list[int]:\n    pass\n",
+    "starterCode": "class Solution:\n    def product_except_self(self, nums: list[int]) -> list[int]:\n        pass\n",
     "publicTests": [
       { "args": [[1, 2, 3, 4]], "expected": [24, 12, 8, 6], "description": "basic increasing values" },
       { "args": [[-1, 1, 0, -3, 3]], "expected": [0, 0, 9, 0, 0], "description": "contains a zero" }
@@ -76,7 +76,7 @@
       ],
       "returnType": "int"
     },
-    "starterCode": "def length_of_longest_substring(s: str) -> int:\n    pass\n",
+    "starterCode": "class Solution:\n    def length_of_longest_substring(self, s: str) -> int:\n        pass\n",
     "publicTests": [
       { "args": ["abcabcbb"], "expected": 3, "description": "window must move forward on repeat" },
       { "args": ["bbbbb"], "expected": 1, "description": "all characters repeat" }
@@ -118,7 +118,7 @@
       ],
       "returnType": "list[int]"
     },
-    "starterCode": "def daily_temperatures(temperatures: list[int]) -> list[int]:\n    pass\n",
+    "starterCode": "class Solution:\n    def daily_temperatures(self, temperatures: list[int]) -> list[int]:\n        pass\n",
     "publicTests": [
       {
         "args": [[73, 74, 75, 71, 69, 72, 76, 73]],

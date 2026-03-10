@@ -12,104 +12,112 @@ import {
 } from "../src/services/roomService.js";
 
 const SOLUTIONS = {
-  contains_duplicate: `def contains_duplicate(nums):
-    return len(set(nums)) != len(nums)
+  contains_duplicate: `class Solution:
+    def contains_duplicate(self, nums):
+        return len(set(nums)) != len(nums)
 `,
-  is_anagram: `def is_anagram(s, t):
-    if len(s) != len(t):
-        return False
-    counts = {}
-    for char in s:
-        counts[char] = counts.get(char, 0) + 1
-    for char in t:
-        if char not in counts:
+  is_anagram: `class Solution:
+    def is_anagram(self, s, t):
+        if len(s) != len(t):
             return False
-        counts[char] -= 1
-        if counts[char] < 0:
-            return False
-    return all(value == 0 for value in counts.values())
+        counts = {}
+        for char in s:
+            counts[char] = counts.get(char, 0) + 1
+        for char in t:
+            if char not in counts:
+                return False
+            counts[char] -= 1
+            if counts[char] < 0:
+                return False
+        return all(value == 0 for value in counts.values())
 `,
-  max_profit: `def max_profit(prices):
-    minimum = float("inf")
-    best = 0
-    for price in prices:
-        minimum = min(minimum, price)
-        best = max(best, price - minimum)
-    return best
+  max_profit: `class Solution:
+    def max_profit(self, prices):
+        minimum = float("inf")
+        best = 0
+        for price in prices:
+            minimum = min(minimum, price)
+            best = max(best, price - minimum)
+        return best
 `,
-  product_except_self: `def product_except_self(nums):
-    output = [1] * len(nums)
-    prefix = 1
-    for index, value in enumerate(nums):
-        output[index] = prefix
-        prefix *= value
-    suffix = 1
-    for index in range(len(nums) - 1, -1, -1):
-        output[index] *= suffix
-        suffix *= nums[index]
-    return output
+  product_except_self: `class Solution:
+    def product_except_self(self, nums):
+        output = [1] * len(nums)
+        prefix = 1
+        for index, value in enumerate(nums):
+            output[index] = prefix
+            prefix *= value
+        suffix = 1
+        for index in range(len(nums) - 1, -1, -1):
+            output[index] *= suffix
+            suffix *= nums[index]
+        return output
 `,
-  length_of_longest_substring: `def length_of_longest_substring(s):
-    seen = {}
-    left = 0
-    best = 0
-    for right, char in enumerate(s):
-        if char in seen:
-            left = max(left, seen[char] + 1)
-        seen[char] = right
-        best = max(best, right - left + 1)
-    return best
+  length_of_longest_substring: `class Solution:
+    def length_of_longest_substring(self, s):
+        seen = {}
+        left = 0
+        best = 0
+        for right, char in enumerate(s):
+            if char in seen:
+                left = max(left, seen[char] + 1)
+            seen[char] = right
+            best = max(best, right - left + 1)
+        return best
 `,
-  daily_temperatures: `def daily_temperatures(temperatures):
-    result = [0] * len(temperatures)
-    stack = []
-    for index, temperature in enumerate(temperatures):
-        while stack and temperature > temperatures[stack[-1]]:
-            previous = stack.pop()
-            result[previous] = index - previous
-        stack.append(index)
-    return result
+  daily_temperatures: `class Solution:
+    def daily_temperatures(self, temperatures):
+        result = [0] * len(temperatures)
+        stack = []
+        for index, temperature in enumerate(temperatures):
+            while stack and temperature > temperatures[stack[-1]]:
+                previous = stack.pop()
+                result[previous] = index - previous
+            stack.append(index)
+        return result
 `,
-  trap_rain_water: `def trap_rain_water(height):
-    left = 0
-    right = len(height) - 1
-    left_max = 0
-    right_max = 0
-    water = 0
-    while left < right:
-        if height[left] < height[right]:
-            left_max = max(left_max, height[left])
-            water += left_max - height[left]
-            left += 1
-        else:
-            right_max = max(right_max, height[right])
-            water += right_max - height[right]
-            right -= 1
-    return water
+  trap_rain_water: `class Solution:
+    def trap_rain_water(self, height):
+        left = 0
+        right = len(height) - 1
+        left_max = 0
+        right_max = 0
+        water = 0
+        while left < right:
+            if height[left] < height[right]:
+                left_max = max(left_max, height[left])
+                water += left_max - height[left]
+                left += 1
+            else:
+                right_max = max(right_max, height[right])
+                water += right_max - height[right]
+                right -= 1
+        return water
 `,
-  min_window: `def min_window(s, t):
-    need = {}
-    for char in t:
-        need[char] = need.get(char, 0) + 1
-    remaining = len(t)
-    left = 0
-    best = ""
-    for right, char in enumerate(s):
-        if char in need:
-            if need[char] > 0:
-                remaining -= 1
-            need[char] -= 1
-        while remaining == 0:
-            window = s[left:right + 1]
-            if not best or len(window) < len(best):
-                best = window
-            left_char = s[left]
-            if left_char in need:
-                need[left_char] += 1
-                if need[left_char] > 0:
-                    remaining += 1
-            left += 1
-    return best
+  min_window: `class Solution:
+    def min_window(self, s, t):
+        need = {}
+        for char in t:
+            need[char] = need.get(char, 0) + 1
+        remaining = len(t)
+        left = 0
+        best = ""
+        for right, char in enumerate(s):
+            if char in need:
+                if need[char] > 0:
+                    remaining -= 1
+                need[char] -= 1
+            while remaining == 0:
+                window = s[left:right + 1]
+                if not best or len(window) < len(best):
+                    best = window
+                left_char = s[left]
+                if left_char in need:
+                    need[left_char] += 1
+                    if need[left_char] > 0:
+                        remaining += 1
+                left += 1
+        return best
 `
 };
 

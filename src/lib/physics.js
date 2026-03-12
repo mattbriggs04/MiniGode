@@ -138,7 +138,7 @@ export function getProgressPercent(course, ball) {
 }
 
 export function simulateSwing({ course, ball, angle, power }) {
-  const boundedPower = clamp(Number(power) || 0, 0.12, 1);
+  const boundedPower = clamp(Number(power) || 0, 0.05, 1);
   const state = {
     x: ball.x,
     y: ball.y,

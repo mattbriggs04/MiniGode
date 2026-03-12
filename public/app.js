@@ -2,7 +2,9 @@ import {
   advanceQuestion as advanceQuestionRequest,
   createRoom,
   fetchBootstrap,
+  getRoomState as getRoomStateRequest,
   joinRoom,
+  notifyDisconnect,
   postChatMessage,
   startRoom as startRoomRequest,
   submitSolution,
@@ -26,7 +28,7 @@ const state = {
   bootstrap: null,
   room: null,
   me: null,
-  session: null,
+  session: loadStoredSession(),
   codeDraft: "",
   activeQuestionAssignment: null,
   evaluation: null,
@@ -94,6 +96,26 @@ function saveStorage(key, value) {
   }
 
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function loadStoredSession() {
+  const stored = loadStorage(SESSION_KEY);
+  if (
+    stored &&
+    typeof stored.roomCode === "string" &&
+    typeof stored.playerId === "string" &&
+    typeof stored.sessionId === "string"
+  ) {
+    return stored;
+  }
+
+  saveStorage(SESSION_KEY, null);
+  return null;
+}
+
+function persistSession(session) {
+  state.session = session;
+  saveStorage(SESSION_KEY, session);
 }
 
 function escapeHtml(value) {
@@ -536,13 +558,18 @@ function connectEvents() {
   }
 
   state.eventSource?.close();
-  const { roomCode, playerId } = state.session;
+  const { roomCode, playerId, sessionId } = state.session;
   const source = new EventSource(
-    `/api/rooms/${encodeURIComponent(roomCode)}/events?playerId=${encodeURIComponent(playerId)}`
+    `/api/rooms/${encodeURIComponent(roomCode)}/events?playerId=${encodeURIComponent(playerId)}&sessionId=${encodeURIComponent(sessionId)}`
   );
 
   source.addEventListener("state", (event) => {
     applyRoomState(JSON.parse(event.data));
+  });
+
+  source.addEventListener("room-closed", (event) => {
+    const payload = JSON.parse(event.data);
+    leaveRoom({ notice: payload.message ?? "Room closed." });
   });
 
   source.onerror = () => {
@@ -742,7 +769,15 @@ function onResizePointerUp() {
 }
 
 function formatCredits(credits) {
+  if (state.me?.devModeEnabled) {
+    return "Unlimited swings";
+  }
+
   return `${credits} swing credit${credits === 1 ? "" : "s"}`;
+}
+
+function canTakeSwing() {
+  return Boolean(state.me && (state.me.devModeEnabled || state.me.swingCredits >= 1));
 }
 
 function getEndVoteSummary() {
@@ -1151,7 +1186,7 @@ function renderGolfControls() {
       <label>
         Power
         <span id="power-value" class="value-label">${powerPercent}%</span>
-        <input id="power-input" type="range" min="12" max="100" value="${powerPercent}">
+        <input id="power-input" type="range" min="5" max="100" value="${powerPercent}">
       </label>
     </div>
 
@@ -1176,7 +1211,7 @@ function renderGolfControls() {
   });
 
   swingButton.disabled =
-    state.me.swingCredits < 1 ||
+    !canTakeSwing() ||
     state.room.status === "finished" ||
     state.me.ball.sunk ||
     state.busy ||
@@ -1259,10 +1294,11 @@ async function onCreateRoom(event) {
 
   try {
     const response = await createRoom(payload);
-    state.session = {
+    persistSession({
       roomCode: response.roomCode,
-      playerId: response.playerId
-    };
+      playerId: response.playerId,
+      sessionId: response.sessionId
+    });
     state.gameScreen = "challenge";
     applyRoomState(response.state);
     connectEvents();
@@ -1280,10 +1316,11 @@ async function onJoinRoom(event) {
 
   try {
     const response = await joinRoom(roomCode, { name });
-    state.session = {
+    persistSession({
       roomCode: response.roomCode,
-      playerId: response.playerId
-    };
+      playerId: response.playerId,
+      sessionId: response.sessionId
+    });
     state.gameScreen = "challenge";
     applyRoomState(response.state);
     connectEvents();
@@ -1301,7 +1338,11 @@ async function onStartGame() {
   elements.startGameButton.disabled = true;
 
   try {
-    const response = await startRoomRequest(state.session.roomCode, state.session.playerId);
+    const response = await startRoomRequest(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId
+    );
     applyRoomState(response.state);
   } catch (error) {
     elements.waitingStatus.textContent = error.message;
@@ -1326,7 +1367,13 @@ async function onSubmitSolution(scope = "all") {
 
   try {
     const sourceCode = codeEditor?.getValue() ?? state.codeDraft;
-    const response = await submitSolution(state.session.roomCode, state.session.playerId, sourceCode, scope);
+    const response = await submitSolution(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId,
+      sourceCode,
+      scope
+    );
     state.evaluation = response.evaluation;
     applyRoomState(response.state);
   } catch (error) {
@@ -1355,7 +1402,11 @@ async function onAdvanceQuestion() {
   elements.nextQuestionButton.disabled = true;
 
   try {
-    const response = await advanceQuestionRequest(state.session.roomCode, state.session.playerId);
+    const response = await advanceQuestionRequest(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId
+    );
     applyRoomState(response.state);
   } catch (error) {
     state.evaluation = {
@@ -1375,7 +1426,7 @@ async function onAdvanceQuestion() {
 }
 
 async function onTakeSwing() {
-  if (!state.session || state.busy || state.swingAnimating || state.me.swingCredits < 1) {
+  if (!state.session || state.busy || state.swingAnimating || !canTakeSwing()) {
     return;
   }
 
@@ -1385,6 +1436,7 @@ async function onTakeSwing() {
     const response = await takeSwing(
       state.session.roomCode,
       state.session.playerId,
+      state.session.sessionId,
       state.shot.angle,
       state.shot.power
     );
@@ -1464,7 +1516,7 @@ function updateShotFromDrag(startPoint, currentPoint) {
   }
 
   state.shot.angle = Math.atan2(startPoint.y - currentPoint.y, startPoint.x - currentPoint.x);
-  state.shot.power = clamp(distance / DRAG_POWER_DISTANCE, 0.12, 1);
+  state.shot.power = clamp(distance / DRAG_POWER_DISTANCE, 0.05, 1);
   syncShotControlLabels();
   return true;
 }
@@ -1623,6 +1675,33 @@ function leaveRoom({ notice = null } = {}) {
   }
 }
 
+function handlePageHide() {
+  if (!state.session) {
+    return;
+  }
+
+  notifyDisconnect(state.session.roomCode, state.session.playerId, state.session.sessionId);
+  state.eventSource?.close();
+}
+
+async function restoreSession() {
+  if (!state.session) {
+    return;
+  }
+
+  try {
+    const response = await getRoomStateRequest(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId
+    );
+    applyRoomState(response);
+    connectEvents();
+  } catch {
+    leaveRoom();
+  }
+}
+
 async function onSendChatMessage(event) {
   event.preventDefault();
 
@@ -1635,7 +1714,12 @@ async function onSendChatMessage(event) {
   renderChatDock();
 
   try {
-    const response = await postChatMessage(state.session.roomCode, state.session.playerId, state.chatDraft);
+    const response = await postChatMessage(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId,
+      state.chatDraft
+    );
     state.chatDraft = "";
     state.chatOpen = true;
     applyRoomState(response.state);
@@ -1657,7 +1741,11 @@ async function onVoteToEndGame() {
   renderViews();
 
   try {
-    const response = await voteToEndRoom(state.session.roomCode, state.session.playerId);
+    const response = await voteToEndRoom(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId
+    );
     applyRoomState(response.state);
   } catch (error) {
     state.chatNotice = error.message;
@@ -1669,7 +1757,7 @@ async function onVoteToEndGame() {
 
 async function init() {
   createShell();
-  saveStorage(SESSION_KEY, null);
+  window.addEventListener("pagehide", handlePageHide);
 
   try {
     state.bootstrap = await fetchBootstrap();
@@ -1696,6 +1784,7 @@ async function init() {
     .map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`)
     .join("");
 
+  await restoreSession();
   renderViews();
 }
 

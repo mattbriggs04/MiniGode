@@ -7,6 +7,7 @@ import {
   createAppError,
   advanceQuestion,
   createRoom,
+  disconnectPlayerSession,
   getBootstrapPayload,
   getRoomState,
   joinRoom,
@@ -135,7 +136,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/start$/.test(url.pathname)) {
       const roomCode = parseRoomCode(url.pathname);
       const body = await readJsonBody(request);
-      const result = startRoom({ roomCode, playerId: body.playerId });
+      const result = startRoom({ roomCode, playerId: body.playerId, sessionId: body.sessionId });
       sendJson(response, 200, result);
       return;
     }
@@ -143,7 +144,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/end$/.test(url.pathname)) {
       const roomCode = parseRoomCode(url.pathname);
       const body = await readJsonBody(request);
-      const result = toggleEndVote({ roomCode, playerId: body.playerId });
+      const result = toggleEndVote({ roomCode, playerId: body.playerId, sessionId: body.sessionId });
       sendJson(response, 200, result);
       return;
     }
@@ -151,7 +152,12 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/chat$/.test(url.pathname)) {
       const roomCode = parseRoomCode(url.pathname);
       const body = await readJsonBody(request);
-      const result = postChatMessage({ roomCode, playerId: body.playerId, message: body.message });
+      const result = postChatMessage({
+        roomCode,
+        playerId: body.playerId,
+        sessionId: body.sessionId,
+        message: body.message
+      });
       sendJson(response, 200, result);
       return;
     }
@@ -174,14 +180,16 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && /^\/api\/rooms\/[^/]+$/.test(url.pathname)) {
       const roomCode = parseRoomCode(url.pathname);
       const playerId = url.searchParams.get("playerId");
-      sendJson(response, 200, getRoomState({ roomCode, playerId }));
+      const sessionId = url.searchParams.get("sessionId");
+      sendJson(response, 200, getRoomState({ roomCode, playerId, sessionId }));
       return;
     }
 
     if (request.method === "GET" && /^\/api\/rooms\/[^/]+\/events$/.test(url.pathname)) {
       const roomCode = parseRoomCode(url.pathname);
       const playerId = url.searchParams.get("playerId");
-      getRoomState({ roomCode, playerId });
+      const sessionId = url.searchParams.get("sessionId");
+      getRoomState({ roomCode, playerId, sessionId });
 
       response.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -189,7 +197,19 @@ const server = http.createServer(async (request, response) => {
         Connection: "keep-alive"
       });
 
-      subscribeToRoom({ roomCode, playerId, response });
+      subscribeToRoom({ roomCode, playerId, sessionId, response });
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/disconnect$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = disconnectPlayerSession({
+        roomCode,
+        playerId: body.playerId,
+        sessionId: body.sessionId
+      });
+      sendJson(response, 200, result);
       return;
     }
 
@@ -199,6 +219,7 @@ const server = http.createServer(async (request, response) => {
       const result = submitAnswer({
         roomCode,
         playerId: body.playerId,
+        sessionId: body.sessionId,
         submission: body.code,
         scope: body.scope
       });
@@ -211,7 +232,8 @@ const server = http.createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const result = advanceQuestion({
         roomCode,
-        playerId: body.playerId
+        playerId: body.playerId,
+        sessionId: body.sessionId
       });
       sendJson(response, 200, result);
       return;
@@ -223,6 +245,7 @@ const server = http.createServer(async (request, response) => {
       const result = takeSwing({
         roomCode,
         playerId: body.playerId,
+        sessionId: body.sessionId,
         angle: body.angle,
         power: body.power
       });

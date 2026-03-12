@@ -8,6 +8,11 @@ import math
 import re
 import sys
 
+try:
+    import resource
+except ImportError:  # pragma: no cover - not available on every platform
+    resource = None
+
 
 ALLOWED_IMPORTS = {
     "bisect",
@@ -23,24 +28,205 @@ ALLOWED_IMPORTS = {
     "typing",
 }
 
+ALLOWED_MAGIC_METHODS = {"__init__"}
+FORBIDDEN_IDENTIFIERS = {
+    "__annotations__",
+    "__builtins__",
+    "__cached__",
+    "__debug__",
+    "__doc__",
+    "__file__",
+    "__import__",
+    "__loader__",
+    "__package__",
+    "__spec__",
+    "breakpoint",
+    "compile",
+    "delattr",
+    "dir",
+    "eval",
+    "exec",
+    "exit",
+    "getattr",
+    "globals",
+    "hasattr",
+    "help",
+    "input",
+    "locals",
+    "memoryview",
+    "object",
+    "open",
+    "quit",
+    "setattr",
+    "super",
+    "type",
+    "vars",
+}
+FORBIDDEN_ATTRIBUTE_NAMES = {
+    "co_consts",
+    "co_names",
+    "co_varnames",
+    "cr_frame",
+    "f_back",
+    "f_globals",
+    "f_locals",
+    "gi_frame",
+    "mro",
+    "tb_frame",
+}
+BLOCKED_NODE_TYPES = tuple(
+    node_type
+    for node_type in (
+        ast.AsyncFor,
+        ast.AsyncFunctionDef,
+        ast.AsyncWith,
+        ast.Await,
+        ast.Global,
+        ast.Nonlocal,
+        getattr(ast, "TryStar", None),
+        ast.Yield,
+        ast.YieldFrom,
+    )
+    if node_type is not None
+)
 
-def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-    root_name = name.split(".")[0]
-    if root_name not in ALLOWED_IMPORTS:
-        raise ImportError(f"Import of '{name}' is not allowed.")
-    return builtins.__import__(name, globals, locals, fromlist, level)
+
+class SourceValidationError(Exception):
+    pass
+
+
+class SecurityValidator(ast.NodeVisitor):
+    def __init__(self, *, allow_imports=False, allow_dunder_defs=False, allowed_names=None):
+        self.allow_imports = allow_imports
+        self.allow_dunder_defs = allow_dunder_defs
+        self.allowed_names = set(allowed_names or ())
+
+    def visit(self, node):
+        if isinstance(node, BLOCKED_NODE_TYPES):
+            raise SourceValidationError(f"{node.__class__.__name__} is not allowed.")
+        return super().visit(node)
+
+    def visit_Import(self, node):
+        if not self.allow_imports:
+            raise SourceValidationError("Import statements are not allowed here.")
+
+        for alias in node.names:
+            root_name = alias.name.split(".")[0]
+            if root_name not in ALLOWED_IMPORTS:
+                raise SourceValidationError(f"Import of '{alias.name}' is not allowed.")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if not self.allow_imports:
+            raise SourceValidationError("Import statements are not allowed here.")
+
+        module_name = (node.module or "").split(".")[0]
+        if node.level != 0 or module_name not in ALLOWED_IMPORTS:
+            raise SourceValidationError(f"Import of '{node.module}' is not allowed.")
+        self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if node.id in self.allowed_names:
+            return
+        if node.id in FORBIDDEN_IDENTIFIERS or node.id.startswith("__"):
+            raise SourceValidationError(f"Identifier '{node.id}' is not allowed.")
+
+    def visit_Attribute(self, node):
+        if node.attr in FORBIDDEN_ATTRIBUTE_NAMES or node.attr.startswith("__"):
+            raise SourceValidationError(f"Attribute '{node.attr}' is not allowed.")
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_IDENTIFIERS:
+            raise SourceValidationError(f"Call to '{node.func.id}' is not allowed.")
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node):
+        if node.name.startswith("__"):
+            raise SourceValidationError(f"Class name '{node.name}' is not allowed.")
+        if node.decorator_list:
+            raise SourceValidationError("Decorators are not allowed.")
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node):
+        if node.decorator_list:
+            raise SourceValidationError("Decorators are not allowed.")
+        if node.name.startswith("__") and (not self.allow_dunder_defs or node.name not in ALLOWED_MAGIC_METHODS):
+            raise SourceValidationError(f"Function name '{node.name}' is not allowed.")
+        self.generic_visit(node)
+
+
+def validate_top_level_statements(tree, allowed_statement_types):
+    for statement in tree.body:
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str):
+            continue
+        if not isinstance(statement, allowed_statement_types):
+            raise SourceValidationError(f"Top-level {statement.__class__.__name__} is not allowed.")
+
+
+def validate_submission_source(source):
+    tree = ast.parse(source, filename="<submission>")
+    validate_top_level_statements(
+        tree,
+        (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.Assign, ast.AnnAssign, ast.Expr),
+    )
+    SecurityValidator(allow_imports=True, allow_dunder_defs=True).visit(tree)
+
+
+def validate_runtime_prelude(source):
+    tree = ast.parse(source, filename="<prelude>")
+    validate_top_level_statements(
+        tree,
+        (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef, ast.Assign, ast.AnnAssign, ast.Expr),
+    )
+    SecurityValidator(allow_imports=True, allow_dunder_defs=True).visit(tree)
+
+
+def validate_hidden_harness(source):
+    tree = ast.parse(source, filename="<tests>")
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.FunctionDef) or tree.body[0].name != "check":
+        raise SourceValidationError("Hidden harness must define only check(candidate).")
+
+    check_function = tree.body[0]
+    if len(check_function.args.args) != 1 or check_function.args.args[0].arg != "candidate":
+        raise SourceValidationError("Hidden harness must define check(candidate).")
+
+    for statement in check_function.body:
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str):
+            continue
+        if not isinstance(statement, ast.Assert):
+            raise SourceValidationError("Hidden harness may only contain assert statements.")
+
+    SecurityValidator(allowed_names={"candidate"}).visit(tree)
+
+
+def apply_resource_limits():
+    if resource is None:
+        return
+
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+    except (AttributeError, OSError, ValueError):
+        pass
+
+    memory_limit_bytes = 512 * 1024 * 1024
+    for limit_name in ("RLIMIT_AS", "RLIMIT_DATA"):
+        try:
+            limit_key = getattr(resource, limit_name)
+            resource.setrlimit(limit_key, (memory_limit_bytes, memory_limit_bytes))
+        except (AttributeError, OSError, ValueError):
+            continue
 
 
 SAFE_BUILTINS = {
     "__build_class__": builtins.__build_class__,
-    "__import__": safe_import,
+    "__import__": builtins.__import__,
     "abs": abs,
     "all": all,
     "any": any,
     "AssertionError": AssertionError,
     "bool": bool,
     "chr": chr,
-    "classmethod": classmethod,
     "dict": dict,
     "divmod": divmod,
     "enumerate": enumerate,
@@ -48,40 +234,36 @@ SAFE_BUILTINS = {
     "filter": filter,
     "float": float,
     "frozenset": frozenset,
-    "getattr": getattr,
-    "hasattr": hasattr,
     "hash": hash,
+    "IndexError": IndexError,
     "int": int,
     "isinstance": isinstance,
     "issubclass": issubclass,
     "iter": iter,
+    "KeyError": KeyError,
     "len": len,
     "list": list,
     "map": map,
     "max": max,
     "min": min,
     "next": next,
-    "object": object,
     "ord": ord,
     "pow": pow,
     "print": builtins.print,
-    "property": property,
     "range": range,
     "repr": repr,
     "reversed": reversed,
     "round": round,
     "RuntimeError": RuntimeError,
     "set": set,
-    "setattr": setattr,
     "slice": slice,
     "sorted": sorted,
-    "staticmethod": staticmethod,
     "str": str,
     "sum": sum,
-    "super": super,
     "tuple": tuple,
     "TypeError": TypeError,
     "ValueError": ValueError,
+    "ZeroDivisionError": ZeroDivisionError,
     "zip": zip,
 }
 
@@ -645,6 +827,12 @@ def main():
     locals_dict = globals_dict
 
     try:
+        apply_resource_limits()
+        if payload.get("runtimePrelude"):
+            validate_runtime_prelude(payload["runtimePrelude"])
+        validate_submission_source(payload.get("submission", ""))
+        if scope == "all" and payload.get("hiddenTestHarness"):
+            validate_hidden_harness(payload["hiddenTestHarness"])
         if payload.get("runtimePrelude"):
             exec(compile(payload["runtimePrelude"], "<prelude>", "exec"), globals_dict, locals_dict)
         exec(compile(payload["submission"], "<submission>", "exec"), globals_dict, locals_dict)

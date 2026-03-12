@@ -1239,10 +1239,12 @@ body.is-resizing-panels * {
   --range-fill-color: #2f8f62;
   width: 100%;
   margin: 0;
+  padding: 0;
   height: 20px;
   border: none;
   border-radius: 999px;
   background: transparent;
+  box-shadow: none;
   appearance: none;
   -webkit-appearance: none;
 }
@@ -1297,8 +1299,12 @@ body.is-resizing-panels * {
   box-shadow: 0 4px 14px rgba(11, 24, 20, 0.22);
 }
 
+.shot-controls input[type="range"]:focus,
 .shot-controls input[type="range"]:focus-visible {
   outline: none;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .shot-controls input[type="range"]:focus-visible::-webkit-slider-thumb {

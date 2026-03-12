@@ -16,6 +16,9 @@ import { evaluateSubmission, sanitizeQuestion } from "../lib/questionEvaluator.j
 
 const MAX_PLAYERS_PER_ROOM = 6;
 const MAX_CHAT_MESSAGES = 80;
+const PLAYER_DISCONNECT_GRACE_MS = 8000;
+const DEV_MODE_NAME = "dev$mode!";
+const DEV_MODE_SWING_CREDITS = 999;
 const roomStore = new Map();
 const roomSubscribers = new Map();
 const PLAYER_COLORS = ["#ff7a59", "#4db6ac", "#ffd166", "#118ab2", "#ef476f", "#83c5be"];
@@ -33,6 +36,10 @@ function normalizeName(name) {
   }
 
   return normalized.slice(0, 24);
+}
+
+function normalizeCanonicalName(name) {
+  return normalizeName(name).toLocaleLowerCase("en-US");
 }
 
 function normalizeDifficulty(difficulty) {
@@ -60,21 +67,58 @@ function normalizeChatBody(message) {
   return normalized.slice(0, 320);
 }
 
+function normalizeSessionId(sessionId) {
+  const normalized = String(sessionId ?? "").trim();
+  if (!normalized) {
+    throw createAppError("Player session is required.", 400);
+  }
+
+  return normalized.slice(0, 64);
+}
+
+function isDevModeName(name) {
+  return normalizeCanonicalName(name) === DEV_MODE_NAME;
+}
+
+function getDisplayedSwingCredits(player) {
+  return player.devModeEnabled ? DEV_MODE_SWING_CREDITS : player.swingCredits;
+}
+
+function cancelPlayerDisconnect(player) {
+  if (player.disconnectTimer) {
+    clearTimeout(player.disconnectTimer);
+    player.disconnectTimer = null;
+  }
+  player.disconnectedAt = null;
+}
+
+function clearRoomDisconnectTimers(room) {
+  room.players.forEach((player) => cancelPlayerDisconnect(player));
+}
+
 function createPlayer(room, name) {
+  const normalizedName = normalizeName(name);
   const course = getCourseById(room.courseId);
+  const devModeEnabled = isDevModeName(normalizedName);
 
   return {
     id: createId("player"),
-    name: normalizeName(name),
+    sessionId: createId("session"),
+    name: normalizedName,
+    canonicalName: normalizeCanonicalName(normalizedName),
     color: PLAYER_COLORS[room.playerOrder.length % PLAYER_COLORS.length],
     joinedAt: Date.now(),
     strokes: 0,
-    swingCredits: 0,
+    swingCredits: devModeEnabled ? DEV_MODE_SWING_CREDITS : 0,
     solvedQuestionIds: [],
     currentQuestionId: null,
     currentQuestionAssignment: 0,
     awaitingNextQuestion: false,
-    ball: createSpawnBall(course)
+    ball: createSpawnBall(course),
+    devModeEnabled,
+    activeConnections: 0,
+    disconnectTimer: null,
+    disconnectedAt: null
   };
 }
 
@@ -111,6 +155,27 @@ function getPlayer(room, playerId) {
   return player;
 }
 
+function getAuthorizedPlayer(room, playerId, sessionId) {
+  const player = getPlayer(room, playerId);
+  if (player.sessionId !== normalizeSessionId(sessionId)) {
+    throw createAppError("Player session is invalid.", 403);
+  }
+  return player;
+}
+
+function findPlayerByCanonicalName(room, canonicalName) {
+  return room.playerOrder
+    .map((playerId) => room.players.get(playerId))
+    .find((player) => player?.canonicalName === canonicalName);
+}
+
+function ensureUniquePlayerName(room, name) {
+  const canonicalName = normalizeCanonicalName(name);
+  if (findPlayerByCanonicalName(room, canonicalName)) {
+    throw createAppError("That name is already taken in this room.", 409);
+  }
+}
+
 function pickQuestionForPlayer(room, player) {
   const pool = getQuestionPool(room.difficulty, room.questionSource);
   const remaining = pool.filter((question) => !player.solvedQuestionIds.includes(question.id));
@@ -129,7 +194,7 @@ function serializePlayer(room, player) {
     name: player.name,
     color: player.color,
     strokes: player.strokes,
-    swingCredits: player.swingCredits,
+    swingCredits: getDisplayedSwingCredits(player),
     solvedCount: player.solvedQuestionIds.length,
     ball: player.ball,
     distanceToHole: getDistanceToHole(course, player.ball),
@@ -190,13 +255,14 @@ function serializeRoomForPlayer(room, playerId) {
       name: player.name,
       color: player.color,
       strokes: player.strokes,
-      swingCredits: player.swingCredits,
+      swingCredits: getDisplayedSwingCredits(player),
       solvedCount: player.solvedQuestionIds.length,
       ball: player.ball,
       isHost: player.id === room.hostId,
       hasEndVote: room.endVotePlayerIds.has(player.id),
       awaitingNextQuestion: player.awaitingNextQuestion,
       currentQuestionAssignment: player.currentQuestionAssignment,
+      devModeEnabled: player.devModeEnabled,
       currentQuestion
     }
   };
@@ -216,6 +282,105 @@ function broadcastRoomState(room) {
   for (const subscriber of subscribers.values()) {
     const payload = serializeRoomForPlayer(room, subscriber.playerId);
     sendEvent(subscriber.response, "state", payload);
+  }
+}
+
+function cleanupSubscription(roomCode, subscription) {
+  clearInterval(subscription.keepAlive);
+  const subscribers = roomSubscribers.get(roomCode);
+  subscribers?.delete(subscription.id);
+  if (subscribers && subscribers.size === 0) {
+    roomSubscribers.delete(roomCode);
+  }
+}
+
+function closePlayerSubscriptions(roomCode, playerId) {
+  const subscribers = roomSubscribers.get(roomCode);
+  if (!subscribers) {
+    return;
+  }
+
+  for (const subscription of subscribers.values()) {
+    if (subscription.playerId !== playerId) {
+      continue;
+    }
+
+    subscription.closedByServer = true;
+    cleanupSubscription(roomCode, subscription);
+    if (!subscription.response.writableEnded) {
+      subscription.response.end();
+    }
+  }
+}
+
+function closeRoom(room, message = "Room closed.") {
+  clearRoomDisconnectTimers(room);
+
+  const subscribers = roomSubscribers.get(room.code);
+  if (subscribers) {
+    for (const subscription of subscribers.values()) {
+      subscription.closedByServer = true;
+      cleanupSubscription(room.code, subscription);
+      if (!subscription.response.writableEnded) {
+        sendEvent(subscription.response, "room-closed", { message });
+        subscription.response.end();
+      }
+    }
+  }
+
+  roomStore.delete(room.code);
+}
+
+function finalizeDisconnectedPlayer(room, playerId) {
+  const player = room.players.get(playerId);
+  if (!player) {
+    return;
+  }
+
+  cancelPlayerDisconnect(player);
+  closePlayerSubscriptions(room.code, player.id);
+  room.players.delete(player.id);
+  room.playerOrder = room.playerOrder.filter((id) => id !== player.id);
+  room.endVotePlayerIds.delete(player.id);
+
+  if (player.id === room.hostId || room.playerOrder.length === 0) {
+    closeRoom(room, player.id === room.hostId ? "The host disconnected, so the room was closed." : "Room closed.");
+    return;
+  }
+
+  broadcastRoomState(room);
+}
+
+function schedulePlayerDisconnect(room, player, immediate = false) {
+  cancelPlayerDisconnect(player);
+
+  if (immediate) {
+    finalizeDisconnectedPlayer(room, player.id);
+    return;
+  }
+
+  player.disconnectedAt = Date.now();
+  player.disconnectTimer = setTimeout(() => {
+    player.disconnectTimer = null;
+    player.disconnectedAt = null;
+    finalizeDisconnectedPlayer(room, player.id);
+  }, PLAYER_DISCONNECT_GRACE_MS);
+}
+
+function registerPlayerConnection(player) {
+  cancelPlayerDisconnect(player);
+  player.activeConnections += 1;
+}
+
+function unregisterPlayerConnection(room, playerId) {
+  const player = room.players.get(playerId);
+  if (!player) {
+    return;
+  }
+
+  player.activeConnections = Math.max(0, player.activeConnections - 1);
+  if (player.activeConnections === 0) {
+    schedulePlayerDisconnect(room, player);
   }
 }
 
@@ -264,6 +429,7 @@ export function createRoom({ name, difficulty, courseId, questionSource }) {
   return {
     roomCode: room.code,
     playerId: host.id,
+    sessionId: host.sessionId,
     state: serializeRoomForPlayer(room, host.id)
   };
 }
@@ -279,6 +445,8 @@ export function joinRoom({ roomCode, name }) {
     throw createAppError("This game has already started.", 409);
   }
 
+  ensureUniquePlayerName(room, name);
+
   const player = createPlayer(room, name);
   room.players.set(player.id, player);
   room.playerOrder.push(player.id);
@@ -287,19 +455,22 @@ export function joinRoom({ roomCode, name }) {
   return {
     roomCode: room.code,
     playerId: player.id,
+    sessionId: player.sessionId,
     state: serializeRoomForPlayer(room, player.id)
   };
 }
 
-export function getRoomState({ roomCode, playerId }) {
+export function getRoomState({ roomCode, playerId, sessionId }) {
   const room = getRoomByCode(roomCode);
+  getAuthorizedPlayer(room, playerId, sessionId);
   return serializeRoomForPlayer(room, playerId);
 }
 
-export function startRoom({ roomCode, playerId }) {
+export function startRoom({ roomCode, playerId, sessionId }) {
   const room = getRoomByCode(roomCode);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
 
-  if (room.hostId !== playerId) {
+  if (room.hostId !== player.id) {
     throw createAppError("Only the host can start the game.", 403);
   }
 
@@ -309,22 +480,22 @@ export function startRoom({ roomCode, playerId }) {
 
   room.status = "active";
   room.playerOrder.forEach((id) => {
-    const player = room.players.get(id);
-    if (player && !player.currentQuestionId) {
-      pickQuestionForPlayer(room, player);
+    const currentPlayer = room.players.get(id);
+    if (currentPlayer && !currentPlayer.currentQuestionId) {
+      pickQuestionForPlayer(room, currentPlayer);
     }
   });
 
   broadcastRoomState(room);
 
   return {
-    state: serializeRoomForPlayer(room, playerId)
+    state: serializeRoomForPlayer(room, player.id)
   };
 }
 
-export function toggleEndVote({ roomCode, playerId }) {
+export function toggleEndVote({ roomCode, playerId, sessionId }) {
   const room = getRoomByCode(roomCode);
-  const player = getPlayer(room, playerId);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
 
   if (room.status === "ended") {
     throw createAppError("This game has already ended.", 409);
@@ -348,9 +519,9 @@ export function toggleEndVote({ roomCode, playerId }) {
   };
 }
 
-export function postChatMessage({ roomCode, playerId, message }) {
+export function postChatMessage({ roomCode, playerId, sessionId, message }) {
   const room = getRoomByCode(roomCode);
-  const player = getPlayer(room, playerId);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
 
   if (room.status === "ended") {
     throw createAppError("This game has already ended.", 409);
@@ -376,14 +547,16 @@ export function postChatMessage({ roomCode, playerId, message }) {
   };
 }
 
-export function subscribeToRoom({ roomCode, playerId, response }) {
+export function subscribeToRoom({ roomCode, playerId, sessionId, response }) {
   const room = getRoomByCode(roomCode);
-  getPlayer(room, playerId);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
+  registerPlayerConnection(player);
 
   const subscription = {
     id: createId("sub"),
     playerId,
     response,
+    closedByServer: false,
     keepAlive: setInterval(() => {
       response.write(": keep-alive\n\n");
     }, 15000)
@@ -397,25 +570,42 @@ export function subscribeToRoom({ roomCode, playerId, response }) {
   sendEvent(response, "state", serializeRoomForPlayer(room, playerId));
 
   response.on("close", () => {
-    clearInterval(subscription.keepAlive);
-    const subscribers = roomSubscribers.get(room.code);
-    subscribers?.delete(subscription.id);
-    if (subscribers && subscribers.size === 0) {
-      roomSubscribers.delete(room.code);
+    cleanupSubscription(room.code, subscription);
+    if (!subscription.closedByServer) {
+      unregisterPlayerConnection(room, playerId);
     }
   });
 }
 
-export function submitAnswer({ roomCode, playerId, submission, scope = "all" }) {
+export function disconnectPlayerSession({ roomCode, playerId, sessionId, immediate = false }) {
   const room = getRoomByCode(roomCode);
-  const player = getPlayer(room, playerId);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
+
+  player.activeConnections = 0;
+  closePlayerSubscriptions(room.code, player.id);
+  schedulePlayerDisconnect(room, player, Boolean(immediate));
+
+  return {
+    disconnected: true,
+    roomClosed: !roomStore.has(room.code)
+  };
+}
+
+export function submitAnswer({ roomCode, playerId, sessionId, submission, scope = "all" }) {
+  const room = getRoomByCode(roomCode);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
   ensureRoomStarted(room);
   const question = getQuestionById(player.currentQuestionId);
 
   const evaluation = evaluateSubmission(question, String(submission ?? ""), scope);
 
-  if (evaluation.passed && scope !== "sample" && !player.awaitingNextQuestion) {
+  if (evaluation.passed && scope !== "sample" && !player.awaitingNextQuestion && !player.devModeEnabled) {
     player.swingCredits += 1;
+    if (!player.solvedQuestionIds.includes(question.id)) {
+      player.solvedQuestionIds.push(question.id);
+    }
+    player.awaitingNextQuestion = true;
+  } else if (evaluation.passed && scope !== "sample" && !player.awaitingNextQuestion && player.devModeEnabled) {
     if (!player.solvedQuestionIds.includes(question.id)) {
       player.solvedQuestionIds.push(question.id);
     }
@@ -430,9 +620,9 @@ export function submitAnswer({ roomCode, playerId, submission, scope = "all" }) 
   };
 }
 
-export function advanceQuestion({ roomCode, playerId }) {
+export function advanceQuestion({ roomCode, playerId, sessionId }) {
   const room = getRoomByCode(roomCode);
-  const player = getPlayer(room, playerId);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
   ensureRoomStarted(room);
 
   if (!player.awaitingNextQuestion) {
@@ -447,9 +637,9 @@ export function advanceQuestion({ roomCode, playerId }) {
   };
 }
 
-export function takeSwing({ roomCode, playerId, angle, power }) {
+export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
   const room = getRoomByCode(roomCode);
-  const player = getPlayer(room, playerId);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
   const course = getCourseById(room.courseId);
   ensureRoomStarted(room);
 
@@ -457,7 +647,7 @@ export function takeSwing({ roomCode, playerId, angle, power }) {
     throw createAppError("This player has already finished the hole.", 409);
   }
 
-  if (player.swingCredits < 1) {
+  if (!player.devModeEnabled && player.swingCredits < 1) {
     throw createAppError("Solve a question before taking a swing.", 409);
   }
 
@@ -469,7 +659,9 @@ export function takeSwing({ roomCode, playerId, angle, power }) {
   });
 
   player.ball = simulation.ball;
-  player.swingCredits -= 1;
+  if (!player.devModeEnabled) {
+    player.swingCredits -= 1;
+  }
   player.strokes += 1;
 
   if (player.ball.sunk) {
@@ -492,6 +684,21 @@ export function listRooms() {
     questionSource: room.questionSource,
     players: room.playerOrder.length
   }));
+}
+
+export function resetRoomServiceState() {
+  roomStore.forEach((room) => clearRoomDisconnectTimers(room));
+  roomStore.clear();
+  roomSubscribers.forEach((subscribers, roomCode) => {
+    for (const subscription of subscribers.values()) {
+      subscription.closedByServer = true;
+      cleanupSubscription(roomCode, subscription);
+      if (!subscription.response.writableEnded) {
+        subscription.response.end();
+      }
+    }
+  });
+  roomSubscribers.clear();
 }
 
 export { createAppError };

@@ -150,7 +150,7 @@ export function evaluateSubmission(question, submission, scope = "all") {
     : question.sampleTests.length + (effectiveScope === "all" ? question.hiddenTestCount : 0);
   const payload = JSON.stringify(buildPayload(question, submission, effectiveScope));
 
-  const result = spawnSync("python3", [PYTHON_RUNNER_PATH], {
+  const result = spawnSync("python3", ["-I", PYTHON_RUNNER_PATH], {
     encoding: "utf8",
     input: payload,
     timeout: PYTHON_TIMEOUT_MS,

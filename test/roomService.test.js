@@ -3,14 +3,21 @@ import assert from "node:assert/strict";
 import {
   advanceQuestion,
   createRoom,
+  disconnectPlayerSession,
   getRoomState,
   joinRoom,
+  listRooms,
   postChatMessage,
+  resetRoomServiceState,
   startRoom,
   toggleEndVote,
   takeSwing,
   submitAnswer
 } from "../src/services/roomService.js";
+
+test.afterEach(() => {
+  resetRoomServiceState();
+});
 
 const SOLUTIONS = {
   contains_duplicate: `class Solution:
@@ -135,7 +142,8 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
 
   const started = startRoom({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
 
   assert.equal(started.state.room.status, "active");
@@ -146,6 +154,7 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   const solved = submitAnswer({
     roomCode: created.roomCode,
     playerId: created.playerId,
+    sessionId: created.sessionId,
     submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
   });
 
@@ -158,6 +167,7 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   const repeatedSolve = submitAnswer({
     roomCode: created.roomCode,
     playerId: created.playerId,
+    sessionId: created.sessionId,
     submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
   });
 
@@ -167,7 +177,8 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
 
   const advanced = advanceQuestion({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
 
   assert.notEqual(advanced.state.me.currentQuestion.id, firstQuestionId);
@@ -177,6 +188,7 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   const swing = takeSwing({
     roomCode: created.roomCode,
     playerId: created.playerId,
+    sessionId: created.sessionId,
     angle: -0.4,
     power: 0.58
   });
@@ -186,7 +198,8 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
 
   const refreshed = getRoomState({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
 
   assert.equal(refreshed.me.strokes, 1);
@@ -202,13 +215,15 @@ test("sample-only runs do not award swings or rotate the question", () => {
 
   const started = startRoom({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
   const questionId = started.state.me.currentQuestion.id;
 
   const sampled = submitAnswer({
     roomCode: created.roomCode,
     playerId: created.playerId,
+    sessionId: created.sessionId,
     submission: SOLUTIONS[started.state.me.currentQuestion.functionName],
     scope: "sample"
   });
@@ -238,7 +253,8 @@ test("players can join before the host starts and are blocked after start", () =
 
   startRoom({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
 
   assert.throws(
@@ -266,7 +282,8 @@ test("the game ends only after every player votes to end it", () => {
 
   const firstVote = toggleEndVote({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
 
   assert.equal(firstVote.ended, false);
@@ -276,7 +293,8 @@ test("the game ends only after every player votes to end it", () => {
 
   const secondVote = toggleEndVote({
     roomCode: created.roomCode,
-    playerId: joined.playerId
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
   });
 
   assert.equal(secondVote.ended, true);
@@ -296,6 +314,7 @@ test("chat messages are attached to room state", () => {
   const posted = postChatMessage({
     roomCode: created.roomCode,
     playerId: created.playerId,
+    sessionId: created.sessionId,
     message: "Ready when you are"
   });
 
@@ -314,10 +333,141 @@ test("rooms can pull questions from the Hugging Face bank", () => {
 
   const started = startRoom({
     roomCode: created.roomCode,
-    playerId: created.playerId
+    playerId: created.playerId,
+    sessionId: created.sessionId
   });
 
   assert.equal(started.state.room.questionSource, "huggingface");
   assert.ok(started.state.me.currentQuestion);
   assert.equal(started.state.me.currentQuestion.source, "huggingface");
+});
+
+test("duplicate player names are rejected within a room", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  assert.throws(
+    () =>
+      joinRoom({
+        roomCode: created.roomCode,
+        name: "host"
+      }),
+    /already taken/
+  );
+});
+
+test("authenticated room state requests require the correct session token", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  assert.throws(
+    () =>
+      getRoomState({
+        roomCode: created.roomCode,
+        playerId: created.playerId,
+        sessionId: "session_invalid"
+      }),
+    /session is invalid/
+  );
+});
+
+test("disconnecting the host deletes the room", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  const disconnected = disconnectPlayerSession({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    immediate: true
+  });
+
+  assert.equal(disconnected.roomClosed, true);
+  assert.equal(listRooms().length, 0);
+  assert.throws(
+    () =>
+      getRoomState({
+        roomCode: created.roomCode,
+        playerId: joined.playerId,
+        sessionId: joined.sessionId
+      }),
+    /Room not found/
+  );
+});
+
+test("disconnecting a guest keeps the room alive and removes that player", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  disconnectPlayerSession({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    immediate: true
+  });
+
+  const refreshed = getRoomState({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(listRooms().length, 1);
+  assert.equal(refreshed.room.players.length, 1);
+  assert.equal(refreshed.room.players[0].name, "Host");
+});
+
+test("dev mode players keep unlimited swings", () => {
+  const created = createRoom({
+    name: "dev$mode!",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(started.state.me.devModeEnabled, true);
+  assert.equal(started.state.me.swingCredits, 999);
+
+  const swing = takeSwing({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    angle: -0.4,
+    power: 0.05
+  });
+
+  assert.equal(swing.state.me.swingCredits, 999);
+  assert.equal(swing.state.me.strokes, 1);
 });

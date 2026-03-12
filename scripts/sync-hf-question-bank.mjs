@@ -72,30 +72,63 @@ function splitTopLevel(value) {
 }
 
 function parseStarterSignature(starterCode) {
-  const signatureMatch = String(starterCode ?? "").match(
-    /def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*([^:\n]+))?:/
-  );
+  const lines = String(starterCode ?? "").replaceAll("\r", "").split("\n");
+  let inSolutionClass = false;
 
-  if (!signatureMatch) {
-    throw new Error("Could not parse starter signature.");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (/^class\s+Solution\s*:/.test(trimmed)) {
+      inSolutionClass = true;
+      continue;
+    }
+
+    if (!inSolutionClass) {
+      continue;
+    }
+
+    if (!/^\s+/.test(line)) {
+      break;
+    }
+
+    if (trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const signatureMatch = line.match(/^\s+def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*([^:\n]+))?:/);
+    if (!signatureMatch) {
+      continue;
+    }
+
+    const [, functionName, rawParameters, rawReturnType] = signatureMatch;
+    const parameters = splitTopLevel(rawParameters)
+      .filter((parameter) => parameter && parameter !== "self")
+      .map((parameter) => {
+        const [name, ...typeParts] = parameter.split(":");
+        return {
+          name: name.trim(),
+          type: typeParts.join(":").trim() || "Any"
+        };
+      });
+
+    return {
+      functionName,
+      parameters,
+      returnType: rawReturnType?.trim() || "Any"
+    };
   }
 
-  const [, functionName, rawParameters, rawReturnType] = signatureMatch;
-  const parameters = splitTopLevel(rawParameters)
-    .filter((parameter) => parameter && parameter !== "self")
-    .map((parameter) => {
-      const [name, ...typeParts] = parameter.split(":");
-      return {
-        name: name.trim(),
-        type: typeParts.join(":").trim() || "Any"
-      };
-    });
+  throw new Error("Could not parse starter signature.");
+}
 
-  return {
-    functionName,
-    parameters,
-    returnType: rawReturnType?.trim() || "Any"
-  };
+function usesReferenceTypes(signature) {
+  return (
+    /TreeNode|ListNode/.test(signature.returnType) ||
+    signature.parameters.some((parameter) => /TreeNode|ListNode/.test(parameter.type))
+  );
 }
 
 function extractExamples(description, fallbackCases) {
@@ -187,15 +220,20 @@ function normalizeQuestion(record) {
   const constraints = extractConstraints(record.problem_description);
   const statement = extractStatement(record.problem_description);
   const hiddenTestCount = countAsserts(record.test);
+  const hiddenTestHarness = String(record.test ?? "").trim();
 
   if (
     !statement.length ||
     !examples.length ||
     hiddenTestCount < 1 ||
-    !record.test?.trim() ||
+    !hiddenTestHarness ||
     !starterCode.includes("class Solution:") ||
     !starterCode.includes(`def ${signature.functionName}(self`)
   ) {
+    return null;
+  }
+
+  if (usesReferenceTypes(signature) && /==\s*None/.test(hiddenTestHarness)) {
     return null;
   }
 
@@ -220,7 +258,7 @@ function normalizeQuestion(record) {
       expected: output,
       description: label
     })),
-    hiddenTestHarness: String(record.test).trim(),
+    hiddenTestHarness,
     hiddenTestCount,
     runtimePrelude: normalizeLineBreaks(record.prompt)
   };

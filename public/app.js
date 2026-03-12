@@ -18,7 +18,7 @@ const COLOR_MODE_KEY = "minigode-color-mode";
 const PROBLEM_PANE_WIDTH_KEY = "minigode-problem-pane-width";
 const EDITOR_TOP_HEIGHT_KEY = "minigode-editor-top-height";
 const EDITOR_LAYOUT_VERSION_KEY = "minigode-editor-layout-version";
-const EDITOR_LAYOUT_VERSION = 2;
+const EDITOR_LAYOUT_VERSION = 3;
 
 migrateEditorLayoutStorage();
 
@@ -48,6 +48,7 @@ const state = {
     angle: -0.75,
     power: 0.48
   },
+  swingAnimating: false,
   eventSource: null
 };
 
@@ -61,7 +62,7 @@ const DRAG_START_RADIUS = 34;
 const MIN_DRAG_DISTANCE = 6;
 const HORIZONTAL_SPLIT_WIDTH = 10;
 const VERTICAL_SPLIT_HEIGHT = 10;
-const DEFAULT_EDITOR_TOP_RATIO = 0.4;
+const DEFAULT_EDITOR_TOP_RATIO = 0.65;
 const MIN_PROBLEM_PANE_WIDTH = 320;
 const MIN_EDITOR_PANE_WIDTH = 420;
 const MIN_EDITOR_TOP_HEIGHT = 260;
@@ -121,6 +122,18 @@ function formatInlineCode(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function syncRangeFill(input) {
+  if (!input) {
+    return;
+  }
+
+  const min = Number(input.min ?? 0);
+  const max = Number(input.max ?? 100);
+  const value = Number(input.value ?? min);
+  const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  input.style.setProperty("--range-fill", `${clamp(percent, 0, 100)}%`);
 }
 
 function formatTestValue(value) {
@@ -1163,9 +1176,14 @@ function renderGolfControls() {
   });
 
   swingButton.disabled =
-    state.me.swingCredits < 1 || state.room.status === "finished" || state.me.ball.sunk || state.busy;
+    state.me.swingCredits < 1 ||
+    state.room.status === "finished" ||
+    state.me.ball.sunk ||
+    state.busy ||
+    state.swingAnimating;
   swingButton.addEventListener("click", onTakeSwing);
   document.getElementById("golf-to-problem-btn")?.addEventListener("click", () => setGameScreen("challenge"));
+  syncShotControlLabels();
 }
 
 function drawCourse() {
@@ -1180,7 +1198,8 @@ function drawCourse() {
     players: state.room.players,
     meId: state.me.id,
     mePlayer: state.room.players.find((player) => player.id === state.me.id),
-    preview: state.room.status !== "finished" && !state.me.ball.sunk ? state.shot : null,
+    preview:
+      state.room.status !== "finished" && !state.me.ball.sunk && !state.swingAnimating ? state.shot : null,
     dragAim: state.dragAim
   });
 }
@@ -1356,7 +1375,7 @@ async function onAdvanceQuestion() {
 }
 
 async function onTakeSwing() {
-  if (!state.session || state.busy || state.me.swingCredits < 1) {
+  if (!state.session || state.busy || state.swingAnimating || state.me.swingCredits < 1) {
     return;
   }
 
@@ -1370,9 +1389,16 @@ async function onTakeSwing() {
       state.shot.power
     );
     applyRoomState(response.state);
+    state.swingAnimating = true;
     requestAnimationFrame(() => {
       drawCourse();
-      renderer.playSwing(response.swing.path);
+      renderer.playSwing(response.swing.path, () => {
+        state.swingAnimating = false;
+        if (getCurrentStage() === "golf" && state.room && state.me) {
+          drawCourse();
+          renderGolfControls();
+        }
+      });
     });
   } catch (error) {
     state.evaluation = {
@@ -1408,10 +1434,12 @@ function syncShotControlLabels() {
   if (angleInput && angleInput !== document.activeElement) {
     angleInput.value = String(angleDegrees);
   }
+  syncRangeFill(angleInput);
 
   if (powerInput && powerInput !== document.activeElement) {
     powerInput.value = String(powerPercent);
   }
+  syncRangeFill(powerInput);
 }
 
 function canAimOnCourse() {
@@ -1421,7 +1449,8 @@ function canAimOnCourse() {
       state.room.status !== "waiting" &&
       state.gameScreen === "golf" &&
       !state.me.ball.sunk &&
-      !state.busy
+      !state.busy &&
+      !state.swingAnimating
   );
 }
 
@@ -1573,6 +1602,7 @@ function onRoomLifecycleReset() {
   state.editorReady = false;
   state.gameScreen = "challenge";
   state.dragAim = null;
+  state.swingAnimating = false;
 }
 
 function leaveRoom({ notice = null } = {}) {

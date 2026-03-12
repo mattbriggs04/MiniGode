@@ -75,15 +75,17 @@ export class CourseRenderer {
     };
   }
 
-  playSwing(path) {
+  playSwing(path, onComplete = null) {
     if (!path?.length) {
+      onComplete?.();
       return;
     }
 
     this.animation = {
       startedAt: performance.now(),
       duration: Math.max(800, path.length * 24),
-      path
+      path,
+      onComplete
     };
 
     const tick = (now) => {
@@ -95,8 +97,10 @@ export class CourseRenderer {
       if (now - this.animation.startedAt < this.animation.duration) {
         requestAnimationFrame(tick);
       } else {
+        const completedAnimation = this.animation;
         this.animation = null;
         this.render(this.lastScene);
+        completedAnimation?.onComplete?.();
       }
     };
 

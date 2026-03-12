@@ -187,29 +187,110 @@ def convert_argument(value, type_name, globals_dict):
     return value
 
 
-def prepare_call_arguments(signature, input_text, globals_dict):
-    positional, keyword = parse_input_bindings(input_text)
+def is_tree_node_instance(value):
+    return value is not None and value.__class__.__name__ == "TreeNode"
+
+
+def find_tree_node_by_value(root, target_value):
+    if not is_tree_node_instance(root):
+        return None
+
+    queue = [root]
+    while queue:
+        node = queue.pop(0)
+        if getattr(node, "val", None) == target_value:
+            return node
+
+        left = getattr(node, "left", None)
+        right = getattr(node, "right", None)
+        if is_tree_node_instance(left):
+            queue.append(left)
+        if is_tree_node_instance(right):
+            queue.append(right)
+
+    return None
+
+
+def resolve_tree_reference(value, tree_roots):
+    if value is None or is_tree_node_instance(value) or isinstance(value, list):
+        return value
+
+    for root in tree_roots:
+        resolved = find_tree_node_by_value(root, value)
+        if resolved is not None:
+            return resolved
+
+    return value
+
+
+def expand_tree_aliases(signature, positional, keyword):
+    if "tree" not in keyword:
+        return positional, keyword
+
     parameter_specs = signature.get("parameters", [])
+    tree_parameter_names = [
+        parameter["name"] for parameter in parameter_specs if annotation_contains(parameter.get("type"), "TreeNode")
+    ]
+
+    if not tree_parameter_names:
+        return positional, keyword
+
+    tree_value = keyword.pop("tree")
+    if "original" in tree_parameter_names and "cloned" in tree_parameter_names:
+        if "original" not in keyword and "cloned" not in keyword:
+            keyword["original"] = copy.deepcopy(tree_value)
+            keyword["cloned"] = copy.deepcopy(tree_value)
+            return positional, keyword
+
+    if "root" in tree_parameter_names and "root" not in keyword:
+        keyword["root"] = tree_value
+        return positional, keyword
+
+    if len(tree_parameter_names) == 1 and tree_parameter_names[0] not in keyword:
+        keyword[tree_parameter_names[0]] = tree_value
+        return positional, keyword
+
+    keyword["tree"] = tree_value
+    return positional, keyword
+
+
+def prepare_runtime_arguments(signature, positional, keyword, globals_dict):
+    parameter_specs = signature.get("parameters", [])
+    positional_values, keyword_values = expand_tree_aliases(signature, list(positional), dict(keyword))
+    tree_roots = []
 
     converted_args = []
-    for index, value in enumerate(positional):
-        parameter_type = parameter_specs[index]["type"] if index < len(parameter_specs) else None
-        converted_args.append(convert_argument(value, parameter_type, globals_dict))
-
     converted_kwargs = {}
-    for parameter in parameter_specs:
-        if parameter["name"] in keyword:
-            converted_kwargs[parameter["name"]] = convert_argument(
-                keyword[parameter["name"]],
-                parameter["type"],
-                globals_dict,
-            )
+    for index, parameter in enumerate(parameter_specs):
+        parameter_name = parameter["name"]
+        parameter_type = parameter["type"]
 
-    for name, value in keyword.items():
-        if name not in converted_kwargs:
-            converted_kwargs[name] = value
+        has_positional = index < len(positional_values)
+        has_keyword = parameter_name in keyword_values
+        if not has_positional and not has_keyword:
+            continue
+
+        raw_value = positional_values[index] if has_positional else keyword_values.pop(parameter_name)
+        converted_value = convert_argument(raw_value, parameter_type, globals_dict)
+        if annotation_contains(parameter_type, "TreeNode"):
+            converted_value = resolve_tree_reference(converted_value, tree_roots)
+            if is_tree_node_instance(converted_value):
+                tree_roots.append(converted_value)
+
+        if has_positional:
+            converted_args.append(converted_value)
+        else:
+            converted_kwargs[parameter_name] = converted_value
+
+    for name, value in keyword_values.items():
+        converted_kwargs[name] = value
 
     return converted_args, converted_kwargs
+
+
+def prepare_call_arguments(signature, input_text, globals_dict):
+    positional, keyword = parse_input_bindings(input_text)
+    return prepare_runtime_arguments(signature, positional, keyword, globals_dict)
 
 
 def get_mutated_output(signature, args, kwargs, actual):
@@ -227,6 +308,15 @@ def get_mutated_output(signature, args, kwargs, actual):
         return args[0]
 
     return actual
+
+
+def normalize_sample_output(actual, expected):
+    if actual is not None and actual.__class__.__name__ in {"TreeNode", "ListNode"} and isinstance(
+        expected, (bool, int, float, str)
+    ):
+        return normalize(getattr(actual, "val", None))
+
+    return normalize(actual)
 
 
 def values_match(actual, expected):
@@ -337,9 +427,9 @@ def run_sample_tests(sample_tests, candidate, signature, globals_dict):
             args, kwargs = prepare_call_arguments(signature, test_case["input"], globals_dict)
             with contextlib.redirect_stdout(output):
                 actual_raw = candidate(*args, **kwargs)
-            comparison_value = get_mutated_output(signature, args, kwargs, actual_raw)
-            actual = normalize(comparison_value)
             expected = normalize(parse_literal(test_case["expected"]))
+            comparison_value = get_mutated_output(signature, args, kwargs, actual_raw)
+            actual = normalize_sample_output(comparison_value, expected)
             stdout = output.getvalue().rstrip()
             results.append(
                 {
@@ -585,7 +675,8 @@ def main():
         return
 
     def candidate(*args, **kwargs):
-        return function(*args, **kwargs)
+        call_args, call_kwargs = prepare_runtime_arguments(payload.get("signature", {}), args, kwargs, globals_dict)
+        return function(*call_args, **call_kwargs)
 
     sample_results = []
     try:

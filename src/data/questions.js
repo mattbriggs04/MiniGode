@@ -28,6 +28,112 @@ function assertQuestion(condition, message) {
   }
 }
 
+function splitTopLevel(value) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+
+  for (const character of String(value ?? "")) {
+    if (character === "," && depth === 0) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+
+    current += character;
+
+    if ("([{".includes(character)) {
+      depth += 1;
+    } else if (")]}".includes(character)) {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+
+  return parts;
+}
+
+function parseSolutionSignature(starterCode) {
+  const lines = String(starterCode ?? "").replaceAll("\r", "").split("\n");
+  let inSolutionClass = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (/^class\s+Solution\s*:/.test(trimmed)) {
+      inSolutionClass = true;
+      continue;
+    }
+
+    if (!inSolutionClass) {
+      continue;
+    }
+
+    if (!/^\s+/.test(line)) {
+      break;
+    }
+
+    if (trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const signatureMatch = line.match(/^\s+def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:->\s*([^:\n]+))?:/);
+    if (!signatureMatch) {
+      continue;
+    }
+
+    const [, functionName, rawParameters, rawReturnType] = signatureMatch;
+    const parameters = splitTopLevel(rawParameters)
+      .filter((parameter) => parameter && parameter !== "self")
+      .map((parameter) => {
+        const [name, ...typeParts] = parameter.split(":");
+        return {
+          name: name.trim(),
+          type: typeParts.join(":").trim() || "Any"
+        };
+      });
+
+    return {
+      functionName,
+      parameters,
+      returnType: rawReturnType?.trim() || "Any"
+    };
+  }
+
+  return null;
+}
+
+function usesReferenceTypes(signature) {
+  return (
+    /TreeNode|ListNode/.test(signature.returnType) ||
+    signature.parameters.some((parameter) => /TreeNode|ListNode/.test(parameter.type))
+  );
+}
+
+function repairHuggingFaceQuestion(question) {
+  const signature = parseSolutionSignature(question.starterCode);
+  if (!signature) {
+    return null;
+  }
+
+  if (usesReferenceTypes(signature) && /==\s*None/.test(question.hiddenTestHarness ?? "")) {
+    return null;
+  }
+
+  return {
+    ...question,
+    signature
+  };
+}
+
 function validateExample(question, example, index) {
   assertQuestion(example && typeof example === "object", `${question.id} example ${index + 1} must be an object.`);
   assertQuestion(typeof example.input === "string" && example.input.trim(), `${question.id} example ${index + 1} must include input.`);
@@ -170,9 +276,10 @@ function loadHuggingFaceQuestionBank() {
   const catalog = loadJson(HUGGINGFACE_BANK_FILE);
   return Object.fromEntries(
     DIFFICULTIES.map((difficulty) => {
-      const questions = withSource(catalog[difficulty] ?? [], "huggingface").map((question) =>
-        validateQuestion(question, difficulty, "huggingface")
-      );
+      const questions = withSource(catalog[difficulty] ?? [], "huggingface")
+        .map((question) => repairHuggingFaceQuestion(question))
+        .filter(Boolean)
+        .map((question) => validateQuestion(question, difficulty, "huggingface"));
       return [difficulty, questions];
     })
   );

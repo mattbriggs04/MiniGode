@@ -57,10 +57,17 @@ export function getRoomState(roomCode, playerId) {
   return requestJson(`/api/rooms/${encodeURIComponent(roomCode)}?playerId=${encodeURIComponent(playerId)}`);
 }
 
-export function submitSolution(roomCode, playerId, code) {
+export function submitSolution(roomCode, playerId, code, scope = "all") {
   return requestJson(`/api/rooms/${encodeURIComponent(roomCode)}/submit`, {
     method: "POST",
-    body: JSON.stringify({ playerId, code })
+    body: JSON.stringify({ playerId, code, scope })
+  });
+}
+
+export function advanceQuestion(roomCode, playerId) {
+  return requestJson(`/api/rooms/${encodeURIComponent(roomCode)}/next-question`, {
+    method: "POST",
+    body: JSON.stringify({ playerId })
   });
 }
 

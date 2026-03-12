@@ -1,4 +1,5 @@
 import {
+  advanceQuestion as advanceQuestionRequest,
   createRoom,
   fetchBootstrap,
   joinRoom,
@@ -14,6 +15,12 @@ import { createEditorController, EDITOR_THEMES, getEditorTheme } from "./editorC
 const SESSION_KEY = "minigode-session";
 const EDITOR_THEME_KEY = "minigode-editor-theme";
 const COLOR_MODE_KEY = "minigode-color-mode";
+const PROBLEM_PANE_WIDTH_KEY = "minigode-problem-pane-width";
+const EDITOR_TOP_HEIGHT_KEY = "minigode-editor-top-height";
+const EDITOR_LAYOUT_VERSION_KEY = "minigode-editor-layout-version";
+const EDITOR_LAYOUT_VERSION = 2;
+
+migrateEditorLayoutStorage();
 
 const state = {
   bootstrap: null,
@@ -21,7 +28,7 @@ const state = {
   me: null,
   session: null,
   codeDraft: "",
-  activeQuestionId: null,
+  activeQuestionAssignment: null,
   evaluation: null,
   notice: null,
   busy: false,
@@ -34,6 +41,9 @@ const state = {
   colorMode: loadStorage(COLOR_MODE_KEY) ?? "light",
   gameScreen: "challenge",
   editorTheme: loadStorage(EDITOR_THEME_KEY) ?? EDITOR_THEMES[0].id,
+  problemPaneWidth: loadStorage(PROBLEM_PANE_WIDTH_KEY),
+  editorTopHeight: loadStorage(EDITOR_TOP_HEIGHT_KEY),
+  dragAim: null,
   shot: {
     angle: -0.75,
     power: 0.48
@@ -45,6 +55,27 @@ let elements;
 let renderer;
 let codeEditor;
 let copyRoomFeedbackTimer;
+let resizeSession = null;
+const DRAG_POWER_DISTANCE = 260;
+const DRAG_START_RADIUS = 34;
+const MIN_DRAG_DISTANCE = 6;
+const HORIZONTAL_SPLIT_WIDTH = 10;
+const VERTICAL_SPLIT_HEIGHT = 10;
+const DEFAULT_EDITOR_TOP_RATIO = 0.4;
+const MIN_PROBLEM_PANE_WIDTH = 320;
+const MIN_EDITOR_PANE_WIDTH = 420;
+const MIN_EDITOR_TOP_HEIGHT = 260;
+const MIN_EDITOR_TERMINAL_HEIGHT = 220;
+
+function migrateEditorLayoutStorage() {
+  const version = loadStorage(EDITOR_LAYOUT_VERSION_KEY);
+  if (version === EDITOR_LAYOUT_VERSION) {
+    return;
+  }
+
+  saveStorage(EDITOR_TOP_HEIGHT_KEY, null);
+  saveStorage(EDITOR_LAYOUT_VERSION_KEY, EDITOR_LAYOUT_VERSION);
+}
 
 function loadStorage(key) {
   try {
@@ -108,6 +139,18 @@ function formatDifficulty(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
 }
 
+function formatQuestionSource(value) {
+  if (value === "huggingface") {
+    return "Hugging Face";
+  }
+
+  if (value === "both") {
+    return "Both banks";
+  }
+
+  return "Local bank";
+}
+
 function createShell() {
   const root = document.getElementById("app");
   root.innerHTML = `
@@ -149,6 +192,10 @@ function createShell() {
             <label>
               Difficulty
               <select id="create-difficulty" name="difficulty"></select>
+            </label>
+            <label>
+              Question bank
+              <select id="create-question-source" name="questionSource"></select>
             </label>
             <label>
               Course
@@ -208,24 +255,42 @@ function createShell() {
             <div id="game-banner" class="winner-banner" hidden></div>
 
             <section id="challenge-screen" class="challenge-screen">
-              <div class="challenge-layout">
+              <div id="challenge-layout" class="challenge-layout">
                 <aside id="problem-panel" class="panel problem-panel"></aside>
+                <div
+                  id="challenge-resize-handle"
+                  class="panel-resize-handle panel-resize-handle--vertical"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize problem and editor panels"
+                ></div>
 
                 <section class="panel editor-panel">
-                  <div class="editor-workspace">
-                    <div id="code-editor" class="code-editor"></div>
-                  </div>
+                  <div id="editor-top-shell" class="editor-top-shell">
+                    <div class="editor-workspace">
+                      <div id="code-editor" class="code-editor"></div>
+                    </div>
 
-                  <div class="editor-controls">
-                    <div class="editor-controls__prefs">
-                      <select id="editor-theme-select" aria-label="Editor theme"></select>
-                      <button id="reset-code-btn" type="button" class="course-switch-button editor-reset-button">Reset code</button>
-                    </div>
-                    <div class="editor-controls__actions">
-                      <button id="problem-to-golf-btn" type="button" class="course-switch-button">Go to course</button>
-                      <button id="run-tests-btn" type="button" class="primary">Run tests</button>
+                    <div id="editor-controls" class="editor-controls">
+                      <div class="editor-controls__prefs">
+                        <select id="editor-theme-select" aria-label="Editor theme"></select>
+                        <button id="reset-code-btn" type="button" class="course-switch-button editor-reset-button">Reset code</button>
+                      </div>
+                      <div class="editor-controls__actions">
+                        <button id="problem-to-golf-btn" type="button" class="course-switch-button">Go to course</button>
+                        <button id="run-sample-tests-btn" type="button" class="course-switch-button">Run samples</button>
+                        <button id="run-tests-btn" type="button" class="primary">Run all tests</button>
+                        <button id="next-question-btn" type="button" class="course-switch-button" hidden>Next question</button>
+                      </div>
                     </div>
                   </div>
+                  <div
+                    id="editor-resize-handle"
+                    class="panel-resize-handle panel-resize-handle--horizontal"
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label="Resize editor and terminal"
+                  ></div>
                   <div id="editor-terminal" class="editor-terminal"></div>
                 </section>
               </div>
@@ -238,7 +303,7 @@ function createShell() {
                     <div>
                       <p class="panel-kicker">Golf course</p>
                       <h3 id="course-name"></h3>
-                      <p class="muted">Click the course to aim. Each shot costs one swing credit.</p>
+                      <p class="muted">Drag backward from the ball to aim and set power. Each shot costs one swing credit.</p>
                     </div>
                   </div>
 
@@ -297,6 +362,7 @@ function createShell() {
     createForm: document.getElementById("create-form"),
     joinForm: document.getElementById("join-form"),
     createDifficulty: document.getElementById("create-difficulty"),
+    createQuestionSource: document.getElementById("create-question-source"),
     createCourse: document.getElementById("create-course"),
     landingNotice: document.getElementById("landing-notice"),
     waitingView: document.getElementById("waiting-view"),
@@ -310,11 +376,19 @@ function createShell() {
     gameShell: document.getElementById("game-shell"),
     gameBanner: document.getElementById("game-banner"),
     challengeScreen: document.getElementById("challenge-screen"),
+    challengeLayout: document.getElementById("challenge-layout"),
+    challengeResizeHandle: document.getElementById("challenge-resize-handle"),
     problemPanel: document.getElementById("problem-panel"),
+    editorPanel: root.querySelector(".editor-panel"),
+    editorTopShell: document.getElementById("editor-top-shell"),
+    editorControls: document.getElementById("editor-controls"),
+    editorResizeHandle: document.getElementById("editor-resize-handle"),
     editorThemeSelect: document.getElementById("editor-theme-select"),
     resetCodeButton: document.getElementById("reset-code-btn"),
     problemToGolfButton: document.getElementById("problem-to-golf-btn"),
+    runSampleTestsButton: document.getElementById("run-sample-tests-btn"),
     runTestsButton: document.getElementById("run-tests-btn"),
+    nextQuestionButton: document.getElementById("next-question-btn"),
     editorTerminal: document.getElementById("editor-terminal"),
     golfScreen: document.getElementById("golf-screen"),
     courseName: document.getElementById("course-name"),
@@ -346,22 +420,36 @@ function createShell() {
   elements.joinForm.addEventListener("submit", onJoinRoom);
   elements.startGameButton.addEventListener("click", onStartGame);
   elements.copyRoomButton.addEventListener("click", copyRoomCode);
-  elements.runTestsButton.addEventListener("click", onSubmitSolution);
+  elements.runSampleTestsButton.addEventListener("click", () => onSubmitSolution("sample"));
+  elements.runTestsButton.addEventListener("click", () => onSubmitSolution("all"));
+  elements.nextQuestionButton.addEventListener("click", onAdvanceQuestion);
   elements.editorThemeSelect.addEventListener("change", onEditorThemeChange);
   elements.resetCodeButton.addEventListener("click", onResetCode);
   elements.problemToGolfButton.addEventListener("click", () => setGameScreen("golf"));
-  elements.courseCanvas.addEventListener("click", onCourseClick);
+  elements.challengeResizeHandle.addEventListener("pointerdown", onChallengeResizeStart);
+  elements.editorResizeHandle.addEventListener("pointerdown", onEditorResizeStart);
+  elements.courseCanvas.addEventListener("pointerdown", onCoursePointerDown);
+  elements.courseCanvas.addEventListener("pointermove", onCoursePointerMove);
+  elements.courseCanvas.addEventListener("pointerup", onCoursePointerUp);
+  elements.courseCanvas.addEventListener("pointercancel", onCoursePointerCancel);
   elements.modeToggleButton.addEventListener("click", onToggleColorMode);
   elements.chatToggleButton.addEventListener("click", () => setChatOpen(true));
   elements.chatCloseButton.addEventListener("click", () => setChatOpen(false));
   elements.chatEndButton.addEventListener("click", onVoteToEndGame);
   elements.chatInput.addEventListener("input", onChatInput);
   elements.chatForm.addEventListener("submit", onSendChatMessage);
+  window.addEventListener("pointermove", onResizePointerMove);
+  window.addEventListener("pointerup", onResizePointerUp);
+  window.addEventListener("pointercancel", onResizePointerUp);
+  window.addEventListener("resize", onWindowResize);
+
+  applyChallengeLayout();
+  applyEditorLayout();
 }
 
 function initializeEditor() {
   if (codeEditor) {
-    codeEditor.setSubmitHandler(onSubmitSolution);
+    codeEditor.setSubmitHandler(() => onSubmitSolution("all"));
     codeEditor.setChangeHandler((value) => {
       state.codeDraft = value;
     });
@@ -373,7 +461,7 @@ function initializeEditor() {
     onChange(value) {
       state.codeDraft = value;
     },
-    onSubmit: onSubmitSolution
+    onSubmit: () => onSubmitSolution("all")
   });
 
   return codeEditor.ensureReady();
@@ -455,18 +543,18 @@ function connectEvents() {
 
 function syncQuestionDraft() {
   if (state.room?.status === "waiting") {
-    state.activeQuestionId = null;
+    state.activeQuestionAssignment = null;
     state.evaluation = null;
     return;
   }
 
-  const questionId = state.me?.currentQuestion?.id;
-  if (!questionId) {
+  const questionAssignment = state.me?.currentQuestionAssignment;
+  if (!questionAssignment || !state.me?.currentQuestion) {
     return;
   }
 
-  if (questionId !== state.activeQuestionId) {
-    state.activeQuestionId = questionId;
+  if (questionAssignment !== state.activeQuestionAssignment) {
+    state.activeQuestionAssignment = questionAssignment;
     state.codeDraft = state.me.currentQuestion.starterCode;
     state.evaluation = null;
     state.gameScreen = "challenge";
@@ -482,6 +570,7 @@ function applyRoomState(payload) {
 
   state.room = payload.room;
   state.me = payload.me;
+  state.dragAim = null;
   syncQuestionDraft();
   renderViews();
 }
@@ -508,6 +597,135 @@ function syncShellPresentation(stage) {
 function setGameScreen(screen) {
   state.gameScreen = screen;
   renderGame();
+}
+
+function requestEditorLayout() {
+  requestAnimationFrame(() => codeEditor?.layout());
+}
+
+function applyChallengeLayout() {
+  if (!elements?.challengeLayout) {
+    return;
+  }
+
+  if (window.innerWidth <= 1240 || !state.problemPaneWidth) {
+    elements.challengeLayout.style.gridTemplateColumns = "";
+    return;
+  }
+
+  const layoutWidth = elements.challengeLayout.getBoundingClientRect().width;
+  const maxProblemWidth = Math.max(MIN_PROBLEM_PANE_WIDTH, layoutWidth - HORIZONTAL_SPLIT_WIDTH - MIN_EDITOR_PANE_WIDTH);
+  const nextWidth = clamp(state.problemPaneWidth, MIN_PROBLEM_PANE_WIDTH, maxProblemWidth);
+
+  elements.challengeLayout.style.gridTemplateColumns = `${nextWidth}px ${HORIZONTAL_SPLIT_WIDTH}px minmax(0, 1fr)`;
+}
+
+function applyEditorLayout() {
+  if (!elements?.editorPanel || !elements?.editorTopShell || !elements?.editorResizeHandle) {
+    return;
+  }
+
+  if (window.innerWidth <= 1240) {
+    elements.editorPanel.style.gridTemplateRows = "";
+    return;
+  }
+
+  const panelHeight = elements.editorPanel.getBoundingClientRect().height;
+  const handleHeight = elements.editorResizeHandle.getBoundingClientRect().height || VERTICAL_SPLIT_HEIGHT;
+  const availableHeight = panelHeight - handleHeight;
+
+  if (availableHeight <= 0) {
+    return;
+  }
+
+  const maxTopHeight = Math.max(MIN_EDITOR_TOP_HEIGHT, availableHeight - MIN_EDITOR_TERMINAL_HEIGHT);
+  const defaultTopHeight = Math.round(availableHeight * DEFAULT_EDITOR_TOP_RATIO);
+  const nextHeight = clamp(state.editorTopHeight ?? defaultTopHeight, MIN_EDITOR_TOP_HEIGHT, maxTopHeight);
+
+  elements.editorPanel.style.gridTemplateRows = `${nextHeight}px ${handleHeight}px minmax(0, 1fr)`;
+}
+
+function onWindowResize() {
+  applyChallengeLayout();
+  applyEditorLayout();
+  requestEditorLayout();
+}
+
+function onChallengeResizeStart(event) {
+  if (window.innerWidth <= 1240) {
+    return;
+  }
+
+  event.preventDefault();
+  elements.challengeResizeHandle.setPointerCapture?.(event.pointerId);
+  resizeSession = {
+    type: "horizontal",
+    startX: event.clientX,
+    initialSize: elements.problemPanel.getBoundingClientRect().width
+  };
+  document.body.classList.add("is-resizing-panels");
+  document.body.style.cursor = "col-resize";
+}
+
+function onEditorResizeStart(event) {
+  if (window.innerWidth <= 1240) {
+    return;
+  }
+
+  event.preventDefault();
+  elements.editorResizeHandle.setPointerCapture?.(event.pointerId);
+  resizeSession = {
+    type: "vertical",
+    startY: event.clientY,
+    initialSize: elements.editorTopShell.getBoundingClientRect().height
+  };
+  document.body.classList.add("is-resizing-panels");
+  document.body.style.cursor = "row-resize";
+}
+
+function onResizePointerMove(event) {
+  if (!resizeSession) {
+    return;
+  }
+
+  if (resizeSession.type === "horizontal") {
+    const layoutWidth = elements.challengeLayout.getBoundingClientRect().width;
+    const maxProblemWidth = Math.max(MIN_PROBLEM_PANE_WIDTH, layoutWidth - HORIZONTAL_SPLIT_WIDTH - MIN_EDITOR_PANE_WIDTH);
+    state.problemPaneWidth = clamp(
+      resizeSession.initialSize + (event.clientX - resizeSession.startX),
+      MIN_PROBLEM_PANE_WIDTH,
+      maxProblemWidth
+    );
+    applyChallengeLayout();
+  } else {
+    const panelHeight = elements.editorPanel.getBoundingClientRect().height;
+    const handleHeight = elements.editorResizeHandle.getBoundingClientRect().height || VERTICAL_SPLIT_HEIGHT;
+    const maxTopHeight = Math.max(MIN_EDITOR_TOP_HEIGHT, panelHeight - handleHeight - MIN_EDITOR_TERMINAL_HEIGHT);
+    state.editorTopHeight = clamp(
+      resizeSession.initialSize + (event.clientY - resizeSession.startY),
+      MIN_EDITOR_TOP_HEIGHT,
+      maxTopHeight
+    );
+    applyEditorLayout();
+  }
+
+  requestEditorLayout();
+}
+
+function onResizePointerUp() {
+  if (!resizeSession) {
+    return;
+  }
+
+  if (resizeSession.type === "horizontal") {
+    saveStorage(PROBLEM_PANE_WIDTH_KEY, Math.round(state.problemPaneWidth));
+  } else {
+    saveStorage(EDITOR_TOP_HEIGHT_KEY, Math.round(state.editorTopHeight));
+  }
+
+  document.body.classList.remove("is-resizing-panels");
+  document.body.style.cursor = "";
+  resizeSession = null;
 }
 
 function formatCredits(credits) {
@@ -613,11 +831,12 @@ function waitingPlayerMarkup(player) {
 
 function renderWaitingRoom() {
   elements.waitingRoomCode.textContent = state.room.code;
-  elements.waitingSubtitle.textContent = `${formatDifficulty(state.room.difficulty)} Python room • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
+  elements.waitingSubtitle.textContent = `${formatDifficulty(state.room.difficulty)} Python room • ${formatQuestionSource(state.room.questionSource)} • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
   elements.waitingPlayerList.innerHTML = state.room.players.map(waitingPlayerMarkup).join("");
   elements.copyRoomButton.textContent = state.copyRoomLabel ?? "Copy room key";
   elements.waitingSettings.innerHTML = `
     <div class="setting-row"><span>Difficulty</span><strong>${formatDifficulty(state.room.difficulty)}</strong></div>
+    <div class="setting-row"><span>Question bank</span><strong>${formatQuestionSource(state.room.questionSource)}</strong></div>
     <div class="setting-row"><span>Language</span><strong>${escapeHtml(state.room.questionLanguage)}</strong></div>
     <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.room.course.name)}</strong></div>
   `;
@@ -641,8 +860,11 @@ function getTerminalCases(question) {
     return {
       ...testCase,
       passed: result ? result.passed : null,
+      input: result?.input ?? testCase.input,
+      expected: result?.expected ?? testCase.expected,
       actual: result?.actual ?? null,
-      error: result?.error ?? null
+      error: result?.error ?? null,
+      stdout: result?.stdout ?? null
     };
   });
 }
@@ -652,10 +874,40 @@ function hiddenCaseSummaryMarkup(hiddenCases) {
     return "";
   }
 
+  if (!state.evaluation) {
+    return `
+      <article class="terminal-case pending">
+        <div class="terminal-case__header">
+          <strong>Hidden cases</strong>
+          <span class="terminal-badge pending">${hiddenCases.length} hidden</span>
+        </div>
+        <div class="terminal-hidden-summary">
+          <span>Run all tests to execute hidden cases.</span>
+        </div>
+      </article>
+    `;
+  }
+
+  if (state.evaluation.scope === "sample") {
+    return `
+      <article class="terminal-case pending">
+        <div class="terminal-case__header">
+          <strong>Hidden cases</strong>
+          <span class="terminal-badge pending">Not run</span>
+        </div>
+        <div class="terminal-hidden-summary">
+          <span>${hiddenCases.length} hidden cases are waiting.</span>
+          <span>Use Run all tests to execute them.</span>
+        </div>
+      </article>
+    `;
+  }
+
   const passedCount = hiddenCases.filter((testCase) => testCase.passed === true).length;
   const failedCount = hiddenCases.filter((testCase) => testCase.passed === false).length;
   const pendingCount = hiddenCases.length - passedCount - failedCount;
   const statusClass = failedCount > 0 ? "fail" : pendingCount > 0 ? "pending" : "pass";
+  const firstFailure = hiddenCases.find((testCase) => testCase.passed === false);
 
   return `
     <article class="terminal-case ${statusClass}">
@@ -669,6 +921,7 @@ function hiddenCaseSummaryMarkup(hiddenCases) {
         <span>${pendingCount} pending</span>
       </div>
     </article>
+    ${firstFailure ? terminalCaseMarkup({ ...firstFailure, label: `${firstFailure.label} failure` }) : ""}
   `;
 }
 
@@ -697,7 +950,9 @@ function terminalCaseMarkup(testCase) {
       ? `Error: ${testCase.error}`
       : testCase.visibility === "shown" && testCase.passed !== null
         ? formatTestValue(testCase.actual)
-        : null;
+        : testCase.passed === false && "actual" in testCase
+          ? formatTestValue(testCase.actual)
+          : null;
 
   return `
     <article class="terminal-case ${statusClass}">
@@ -720,6 +975,17 @@ function terminalCaseMarkup(testCase) {
           <code>${escapeHtml(output ?? statusText)}</code>
         </div>
       </div>
+
+      ${
+        testCase.stdout
+          ? `
+            <div class="terminal-stdout">
+              <span class="terminal-label">Stdout</span>
+              <code>${escapeHtml(testCase.stdout)}</code>
+            </div>
+          `
+          : ""
+      }
     </article>
   `;
 }
@@ -811,8 +1077,13 @@ function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
   elements.editorThemeSelect.value = theme.id;
   elements.resetCodeButton.disabled = state.busy || !state.editorReady;
+  elements.runSampleTestsButton.disabled = state.busy || !state.editorReady;
   elements.runTestsButton.disabled = state.busy || !state.editorReady;
+  elements.nextQuestionButton.hidden = !state.me.awaitingNextQuestion;
+  elements.nextQuestionButton.disabled = state.busy;
   elements.problemToGolfButton.disabled = state.busy;
+  applyChallengeLayout();
+  applyEditorLayout();
   renderEditorTerminal();
 
   void initializeEditor()
@@ -821,7 +1092,9 @@ function renderEditor() {
       await codeEditor.setValue(state.codeDraft);
       state.editorReady = true;
       elements.resetCodeButton.disabled = state.busy;
+      elements.runSampleTestsButton.disabled = state.busy;
       elements.runTestsButton.disabled = state.busy;
+      applyEditorLayout();
       codeEditor.layout();
     })
     .catch((error) => {
@@ -859,12 +1132,12 @@ function renderGolfControls() {
     <div class="shot-controls">
       <label>
         Angle
-        <span class="value-label">${angleDegrees}&deg;</span>
+        <span id="angle-value" class="value-label">${angleDegrees}&deg;</span>
         <input id="angle-input" type="range" min="0" max="359" value="${angleDegrees}">
       </label>
       <label>
         Power
-        <span class="value-label">${powerPercent}%</span>
+        <span id="power-value" class="value-label">${powerPercent}%</span>
         <input id="power-input" type="range" min="12" max="100" value="${powerPercent}">
       </label>
     </div>
@@ -879,13 +1152,13 @@ function renderGolfControls() {
 
   angleInput.addEventListener("input", () => {
     state.shot.angle = (Number(angleInput.value) * Math.PI) / 180;
-    renderGolfControls();
+    syncShotControlLabels();
     drawCourse();
   });
 
   powerInput.addEventListener("input", () => {
     state.shot.power = Number(powerInput.value) / 100;
-    renderGolfControls();
+    syncShotControlLabels();
     drawCourse();
   });
 
@@ -900,12 +1173,15 @@ function drawCourse() {
     return;
   }
 
+  elements.courseCanvas.classList.toggle("is-dragging", Boolean(state.dragAim));
+
   renderer.render({
     course: state.room.course,
     players: state.room.players,
     meId: state.me.id,
     mePlayer: state.room.players.find((player) => player.id === state.me.id),
-    preview: state.me.swingCredits > 0 && state.room.status !== "finished" ? state.shot : null
+    preview: state.room.status !== "finished" && !state.me.ball.sunk ? state.shot : null,
+    dragAim: state.dragAim
   });
 }
 
@@ -925,7 +1201,11 @@ function renderGame() {
   } else {
     renderProblemPanel();
     renderEditor();
-    requestAnimationFrame(() => codeEditor?.layout());
+    requestAnimationFrame(() => {
+      applyChallengeLayout();
+      applyEditorLayout();
+      codeEditor?.layout();
+    });
   }
 }
 
@@ -1016,22 +1296,52 @@ async function onStartGame() {
   }
 }
 
-async function onSubmitSolution() {
+async function onSubmitSolution(scope = "all") {
   if (!state.session || state.busy || !state.editorReady) {
     return;
   }
 
   state.busy = true;
+  elements.runSampleTestsButton.disabled = true;
   elements.runTestsButton.disabled = true;
 
   try {
     const sourceCode = codeEditor?.getValue() ?? state.codeDraft;
-    const response = await submitSolution(state.session.roomCode, state.session.playerId, sourceCode);
+    const response = await submitSolution(state.session.roomCode, state.session.playerId, sourceCode, scope);
     state.evaluation = response.evaluation;
     applyRoomState(response.state);
   } catch (error) {
     state.evaluation = {
       passed: false,
+      scope,
+      message: error.message,
+      testsPassed: 0,
+      totalTests: 0,
+      results: []
+    };
+  } finally {
+    state.busy = false;
+    if (getCurrentStage() === "challenge" && state.room && state.me) {
+      renderEditor();
+    }
+  }
+}
+
+async function onAdvanceQuestion() {
+  if (!state.session || state.busy || !state.me?.awaitingNextQuestion) {
+    return;
+  }
+
+  state.busy = true;
+  elements.nextQuestionButton.disabled = true;
+
+  try {
+    const response = await advanceQuestionRequest(state.session.roomCode, state.session.playerId);
+    applyRoomState(response.state);
+  } catch (error) {
+    state.evaluation = {
+      passed: false,
+      scope: "all",
       message: error.message,
       testsPassed: 0,
       totalTests: 0,
@@ -1079,24 +1389,118 @@ async function onTakeSwing() {
   }
 }
 
-function onCourseClick(event) {
-  if (!state.room || !state.me || state.room.status === "waiting" || state.gameScreen !== "golf" || state.me.ball.sunk) {
+function syncShotControlLabels() {
+  const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
+  const powerPercent = Math.round(state.shot.power * 100);
+  const angleValue = document.getElementById("angle-value");
+  const powerValue = document.getElementById("power-value");
+  const angleInput = document.getElementById("angle-input");
+  const powerInput = document.getElementById("power-input");
+
+  if (angleValue) {
+    angleValue.textContent = `${angleDegrees}\u00b0`;
+  }
+
+  if (powerValue) {
+    powerValue.textContent = `${powerPercent}%`;
+  }
+
+  if (angleInput && angleInput !== document.activeElement) {
+    angleInput.value = String(angleDegrees);
+  }
+
+  if (powerInput && powerInput !== document.activeElement) {
+    powerInput.value = String(powerPercent);
+  }
+}
+
+function canAimOnCourse() {
+  return Boolean(
+    state.room &&
+      state.me &&
+      state.room.status !== "waiting" &&
+      state.gameScreen === "golf" &&
+      !state.me.ball.sunk &&
+      !state.busy
+  );
+}
+
+function updateShotFromDrag(startPoint, currentPoint) {
+  const dx = currentPoint.x - startPoint.x;
+  const dy = currentPoint.y - startPoint.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance < MIN_DRAG_DISTANCE) {
+    return false;
+  }
+
+  state.shot.angle = Math.atan2(startPoint.y - currentPoint.y, startPoint.x - currentPoint.x);
+  state.shot.power = clamp(distance / DRAG_POWER_DISTANCE, 0.12, 1);
+  syncShotControlLabels();
+  return true;
+}
+
+function onCoursePointerDown(event) {
+  if (!canAimOnCourse()) {
     return;
   }
 
   const worldPoint = renderer.screenToWorld(event, state.room.course);
-  const dx = worldPoint.x - state.me.ball.x;
-  const dy = worldPoint.y - state.me.ball.y;
-  const distance = Math.hypot(dx, dy);
-
-  if (distance < 8) {
+  const distanceToBall = Math.hypot(worldPoint.x - state.me.ball.x, worldPoint.y - state.me.ball.y);
+  if (distanceToBall > DRAG_START_RADIUS) {
     return;
   }
 
-  state.shot.angle = Math.atan2(dy, dx);
-  state.shot.power = clamp(distance / 260, 0.12, 1);
-  renderGolfControls();
+  event.preventDefault();
+  state.dragAim = {
+    pointerId: event.pointerId,
+    start: worldPoint,
+    current: worldPoint
+  };
+  elements.courseCanvas.setPointerCapture?.(event.pointerId);
   drawCourse();
+}
+
+function onCoursePointerMove(event) {
+  if (!state.dragAim || state.dragAim.pointerId !== event.pointerId || !canAimOnCourse()) {
+    return;
+  }
+
+  const worldPoint = renderer.screenToWorld(event, state.room.course);
+  state.dragAim.current = worldPoint;
+  updateShotFromDrag(state.dragAim.start, worldPoint);
+  drawCourse();
+}
+
+function clearDragAim(pointerId) {
+  if (pointerId !== undefined && state.dragAim?.pointerId === pointerId) {
+    elements.courseCanvas.releasePointerCapture?.(pointerId);
+  }
+
+  state.dragAim = null;
+  drawCourse();
+}
+
+function onCoursePointerUp(event) {
+  if (!state.dragAim || state.dragAim.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const worldPoint = renderer.screenToWorld(event, state.room.course);
+  const updated = updateShotFromDrag(state.dragAim.start, worldPoint);
+  clearDragAim(event.pointerId);
+
+  if (updated) {
+    renderGolfControls();
+  }
+}
+
+function onCoursePointerCancel(event) {
+  if (!state.dragAim || state.dragAim.pointerId !== event.pointerId) {
+    return;
+  }
+
+  clearDragAim(event.pointerId);
 }
 
 function onEditorThemeChange(event) {
@@ -1159,7 +1563,7 @@ function clearCopyRoomFeedback() {
 function onRoomLifecycleReset() {
   clearCopyRoomFeedback();
   state.codeDraft = "";
-  state.activeQuestionId = null;
+  state.activeQuestionAssignment = null;
   state.evaluation = null;
   state.busy = false;
   state.chatBusy = false;
@@ -1168,6 +1572,7 @@ function onRoomLifecycleReset() {
   state.chatOpen = false;
   state.editorReady = false;
   state.gameScreen = "challenge";
+  state.dragAim = null;
 }
 
 function leaveRoom({ notice = null } = {}) {
@@ -1246,6 +1651,16 @@ async function init() {
   elements.createDifficulty.innerHTML = state.bootstrap.difficulties
     .map((difficulty) => `<option value="${difficulty}">${formatDifficulty(difficulty)}</option>`)
     .join("");
+
+  const questionSourceOrder = ["both", "huggingface", "local"].filter((source) =>
+    state.bootstrap.questionSources.includes(source)
+  );
+  elements.createQuestionSource.innerHTML = questionSourceOrder
+    .map((source) => `<option value="${source}">${formatQuestionSource(source)}</option>`)
+    .join("");
+  if (questionSourceOrder.includes("both")) {
+    elements.createQuestionSource.value = "both";
+  }
 
   elements.createCourse.innerHTML = state.bootstrap.courses
     .map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`)

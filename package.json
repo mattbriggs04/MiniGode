@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "sync:hf-questions": "node scripts/sync-hf-question-bank.mjs"
   },
   "engines": {
     "node": ">=20"

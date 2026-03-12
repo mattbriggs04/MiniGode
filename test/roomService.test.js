@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  advanceQuestion,
   createRoom,
   getRoomState,
   joinRoom,
@@ -121,11 +122,12 @@ const SOLUTIONS = {
 `
 };
 
-test("room flow awards a swing for a correct solution and spends it on a shot", () => {
+test("room flow awards a swing for a correct solution, waits for advance, and spends it on a shot", () => {
   const created = createRoom({
     name: "Ada",
     difficulty: "easy",
-    courseId: "sunset-switchbacks"
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
   });
 
   assert.equal(created.state.room.status, "waiting");
@@ -138,6 +140,8 @@ test("room flow awards a swing for a correct solution and spends it on a shot", 
 
   assert.equal(started.state.room.status, "active");
   assert.ok(started.state.me.currentQuestion);
+  const firstQuestionId = started.state.me.currentQuestion.id;
+  const firstAssignment = started.state.me.currentQuestionAssignment;
 
   const solved = submitAnswer({
     roomCode: created.roomCode,
@@ -147,6 +151,28 @@ test("room flow awards a swing for a correct solution and spends it on a shot", 
 
   assert.equal(solved.evaluation.passed, true);
   assert.equal(solved.state.me.swingCredits, 1);
+  assert.equal(solved.state.me.currentQuestion.id, firstQuestionId);
+  assert.equal(solved.state.me.currentQuestionAssignment, firstAssignment);
+  assert.equal(solved.state.me.awaitingNextQuestion, true);
+
+  const repeatedSolve = submitAnswer({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
+  });
+
+  assert.equal(repeatedSolve.evaluation.passed, true);
+  assert.equal(repeatedSolve.state.me.swingCredits, 1);
+  assert.equal(repeatedSolve.state.me.currentQuestion.id, firstQuestionId);
+
+  const advanced = advanceQuestion({
+    roomCode: created.roomCode,
+    playerId: created.playerId
+  });
+
+  assert.notEqual(advanced.state.me.currentQuestion.id, firstQuestionId);
+  assert.equal(advanced.state.me.awaitingNextQuestion, false);
+  assert.ok(advanced.state.me.currentQuestionAssignment > firstAssignment);
 
   const swing = takeSwing({
     roomCode: created.roomCode,
@@ -166,11 +192,40 @@ test("room flow awards a swing for a correct solution and spends it on a shot", 
   assert.equal(refreshed.me.strokes, 1);
 });
 
+test("sample-only runs do not award swings or rotate the question", () => {
+  const created = createRoom({
+    name: "Ada",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId
+  });
+  const questionId = started.state.me.currentQuestion.id;
+
+  const sampled = submitAnswer({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    submission: SOLUTIONS[started.state.me.currentQuestion.functionName],
+    scope: "sample"
+  });
+
+  assert.equal(sampled.evaluation.passed, true);
+  assert.equal(sampled.evaluation.scope, "sample");
+  assert.equal(sampled.state.me.swingCredits, 0);
+  assert.equal(sampled.state.me.currentQuestion.id, questionId);
+  assert.equal(sampled.state.me.awaitingNextQuestion, false);
+});
+
 test("players can join before the host starts and are blocked after start", () => {
   const created = createRoom({
     name: "Host",
     difficulty: "medium",
-    courseId: "sunset-switchbacks"
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
   });
 
   const joined = joinRoom({
@@ -200,7 +255,8 @@ test("the game ends only after every player votes to end it", () => {
   const created = createRoom({
     name: "Host",
     difficulty: "easy",
-    courseId: "sunset-switchbacks"
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
   });
 
   const joined = joinRoom({
@@ -233,7 +289,8 @@ test("chat messages are attached to room state", () => {
   const created = createRoom({
     name: "Host",
     difficulty: "easy",
-    courseId: "sunset-switchbacks"
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
   });
 
   const posted = postChatMessage({
@@ -245,4 +302,22 @@ test("chat messages are attached to room state", () => {
   assert.equal(posted.state.room.chatMessages.length, 1);
   assert.equal(posted.state.room.chatMessages[0].body, "Ready when you are");
   assert.equal(posted.state.room.chatMessages[0].playerName, "Host");
+});
+
+test("rooms can pull questions from the Hugging Face bank", () => {
+  const created = createRoom({
+    name: "HF Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "huggingface"
+  });
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId
+  });
+
+  assert.equal(started.state.room.questionSource, "huggingface");
+  assert.ok(started.state.me.currentQuestion);
+  assert.equal(started.state.me.currentQuestion.source, "huggingface");
 });

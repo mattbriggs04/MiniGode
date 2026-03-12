@@ -179,6 +179,20 @@ export class CourseRenderer {
     const context = this.context;
 
     context.save();
+    if (scene.dragAim?.current) {
+      context.strokeStyle = "rgba(255, 184, 77, 0.95)";
+      context.lineWidth = 4;
+      context.beginPath();
+      context.moveTo(scene.mePlayer.ball.x, scene.mePlayer.ball.y);
+      context.lineTo(scene.dragAim.current.x, scene.dragAim.current.y);
+      context.stroke();
+
+      context.fillStyle = "rgba(255, 184, 77, 0.95)";
+      context.beginPath();
+      context.arc(scene.dragAim.current.x, scene.dragAim.current.y, 6, 0, Math.PI * 2);
+      context.fill();
+    }
+
     context.strokeStyle = "rgba(255, 245, 190, 0.9)";
     context.lineWidth = 3;
     context.setLineDash([10, 8]);

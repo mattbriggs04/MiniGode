@@ -1,5 +1,10 @@
 import { getCourseById, getCourseSummaries } from "../data/courses.js";
-import { DIFFICULTIES, getQuestionById, getQuestionPool } from "../data/questions.js";
+import {
+  DIFFICULTIES,
+  QUESTION_SOURCES,
+  getQuestionById,
+  getQuestionPool
+} from "../data/questions.js";
 import { createId, createRoomCode } from "../lib/ids.js";
 import {
   createSpawnBall,
@@ -38,6 +43,14 @@ function normalizeDifficulty(difficulty) {
   return value;
 }
 
+function normalizeQuestionSource(source, fallback = "local") {
+  const value = String(source ?? fallback).toLowerCase();
+  if (!QUESTION_SOURCES.includes(value)) {
+    throw createAppError("Invalid question source.");
+  }
+  return value;
+}
+
 function normalizeChatBody(message) {
   const normalized = String(message ?? "").trim();
   if (!normalized) {
@@ -59,6 +72,8 @@ function createPlayer(room, name) {
     swingCredits: 0,
     solvedQuestionIds: [],
     currentQuestionId: null,
+    currentQuestionAssignment: 0,
+    awaitingNextQuestion: false,
     ball: createSpawnBall(course)
   };
 }
@@ -97,11 +112,13 @@ function getPlayer(room, playerId) {
 }
 
 function pickQuestionForPlayer(room, player) {
-  const pool = getQuestionPool(room.difficulty);
+  const pool = getQuestionPool(room.difficulty, room.questionSource);
   const remaining = pool.filter((question) => !player.solvedQuestionIds.includes(question.id));
   const selectionPool = remaining.length > 0 ? remaining : pool;
   const question = selectionPool[Math.floor(Math.random() * selectionPool.length)];
   player.currentQuestionId = question.id;
+  player.currentQuestionAssignment += 1;
+  player.awaitingNextQuestion = false;
   return question;
 }
 
@@ -157,6 +174,7 @@ function serializeRoomForPlayer(room, playerId) {
       winnerId: room.winnerId,
       hostId: room.hostId,
       difficulty: room.difficulty,
+      questionSource: room.questionSource,
       createdAt: room.createdAt,
       questionLanguage: "Python 3",
       endVotes: {
@@ -177,6 +195,8 @@ function serializeRoomForPlayer(room, playerId) {
       ball: player.ball,
       isHost: player.id === room.hostId,
       hasEndVote: room.endVotePlayerIds.has(player.id),
+      awaitingNextQuestion: player.awaitingNextQuestion,
+      currentQuestionAssignment: player.currentQuestionAssignment,
       currentQuestion
     }
   };
@@ -202,6 +222,7 @@ function broadcastRoomState(room) {
 export function getBootstrapPayload() {
   return {
     difficulties: DIFFICULTIES,
+    questionSources: QUESTION_SOURCES,
     courses: getCourseSummaries(),
     limits: {
       maxPlayersPerRoom: MAX_PLAYERS_PER_ROOM
@@ -209,8 +230,9 @@ export function getBootstrapPayload() {
   };
 }
 
-export function createRoom({ name, difficulty, courseId }) {
+export function createRoom({ name, difficulty, courseId, questionSource }) {
   const normalizedDifficulty = normalizeDifficulty(difficulty);
+  const normalizedQuestionSource = normalizeQuestionSource(questionSource, "local");
   const selectedCourse = getCourseById(courseId);
   let roomCode = createRoomCode();
 
@@ -222,6 +244,7 @@ export function createRoom({ name, difficulty, courseId }) {
     code: roomCode,
     createdAt: Date.now(),
     difficulty: normalizedDifficulty,
+    questionSource: normalizedQuestionSource,
     courseId: selectedCourse.id,
     status: "waiting",
     winnerId: null,
@@ -383,26 +406,43 @@ export function subscribeToRoom({ roomCode, playerId, response }) {
   });
 }
 
-export function submitAnswer({ roomCode, playerId, submission }) {
+export function submitAnswer({ roomCode, playerId, submission, scope = "all" }) {
   const room = getRoomByCode(roomCode);
   const player = getPlayer(room, playerId);
   ensureRoomStarted(room);
   const question = getQuestionById(player.currentQuestionId);
 
-  const evaluation = evaluateSubmission(question, String(submission ?? ""));
+  const evaluation = evaluateSubmission(question, String(submission ?? ""), scope);
 
-  if (evaluation.passed) {
+  if (evaluation.passed && scope !== "sample" && !player.awaitingNextQuestion) {
     player.swingCredits += 1;
     if (!player.solvedQuestionIds.includes(question.id)) {
       player.solvedQuestionIds.push(question.id);
     }
-    pickQuestionForPlayer(room, player);
+    player.awaitingNextQuestion = true;
   }
 
   broadcastRoomState(room);
 
   return {
     evaluation,
+    state: serializeRoomForPlayer(room, player.id)
+  };
+}
+
+export function advanceQuestion({ roomCode, playerId }) {
+  const room = getRoomByCode(roomCode);
+  const player = getPlayer(room, playerId);
+  ensureRoomStarted(room);
+
+  if (!player.awaitingNextQuestion) {
+    throw createAppError("Solve the current question before advancing.", 409);
+  }
+
+  pickQuestionForPlayer(room, player);
+  broadcastRoomState(room);
+
+  return {
     state: serializeRoomForPlayer(room, player.id)
   };
 }
@@ -449,6 +489,7 @@ export function listRooms() {
   return Array.from(roomStore.values()).map((room) => ({
     code: room.code,
     difficulty: room.difficulty,
+    questionSource: room.questionSource,
     players: room.playerOrder.length
   }));
 }

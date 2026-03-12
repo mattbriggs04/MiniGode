@@ -233,11 +233,20 @@ textarea:focus-visible {
 }
 
 .app-shell.is-gameplay main,
-.app-shell.is-gameplay .room-stage,
-.app-shell.is-gameplay .game-shell,
+.app-shell.is-gameplay .room-stage {
+  min-height: 100vh;
+}
+
+.app-shell.is-gameplay .game-shell {
+  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+}
+
 .app-shell.is-gameplay .challenge-screen,
 .app-shell.is-gameplay .golf-screen {
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
 }
 
 .hero {
@@ -484,24 +493,63 @@ label {
 
 .game-shell {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
+  overflow: hidden;
 }
 
 .challenge-layout {
   display: grid;
-  grid-template-columns: minmax(340px, 30%) minmax(0, 70%);
+  grid-template-columns: minmax(340px, 30%) 10px minmax(0, 1fr);
   gap: 0;
   align-items: stretch;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .problem-panel,
 .editor-panel {
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
 }
 
 .problem-panel {
   overflow: auto;
+}
+
+.panel-resize-handle {
+  position: relative;
+  z-index: 2;
+  background: rgba(19, 39, 30, 0.12);
+}
+
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border-radius: 999px;
+  background: rgba(123, 220, 181, 0.42);
+}
+
+.panel-resize-handle--vertical {
+  cursor: col-resize;
+}
+
+.panel-resize-handle--vertical::after {
+  width: 4px;
+  height: 64px;
+}
+
+.panel-resize-handle--horizontal {
+  height: 10px;
+  cursor: row-resize;
+}
+
+.panel-resize-handle--horizontal::after {
+  width: 72px;
+  height: 4px;
 }
 
 .app-shell.is-gameplay .problem-panel,
@@ -723,13 +771,22 @@ body.theme-dark .difficulty-pill--hard {
 
 .editor-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto minmax(240px, 31vh);
+  grid-template-rows: minmax(260px, 2fr) 10px minmax(220px, 3fr);
   gap: 0;
   overflow: hidden;
   min-height: 0;
 }
 
+.editor-top-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .editor-workspace {
+  flex: 1 1 auto;
   min-height: 0;
   background: var(--editor-shell-bg);
 }
@@ -798,7 +855,7 @@ body.theme-dark .difficulty-pill--hard {
 .code-editor {
   width: 100%;
   height: 100%;
-  min-height: 56vh;
+  min-height: 0;
   overflow: hidden;
   border: none;
 }
@@ -819,7 +876,7 @@ body.theme-dark .difficulty-pill--hard {
 .editor-terminal {
   display: grid;
   gap: 14px;
-  min-height: 280px;
+  min-height: 0;
   padding: 16px 18px 18px;
   border: none;
   background: var(--terminal-bg);
@@ -830,6 +887,11 @@ body.theme-dark .difficulty-pill--hard {
 .editor-terminal .panel-kicker,
 .editor-terminal h4 {
   color: inherit;
+}
+
+body.is-resizing-panels,
+body.is-resizing-panels * {
+  user-select: none;
 }
 
 .terminal-header {
@@ -934,6 +996,23 @@ body.theme-dark .difficulty-pill--hard {
   border-radius: 999px;
   background: var(--terminal-surface);
   font-size: 0.82rem;
+}
+
+.terminal-stdout {
+  display: grid;
+  gap: 8px;
+}
+
+.terminal-stdout code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--terminal-surface);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .chat-dock {
@@ -1123,6 +1202,12 @@ body.theme-dark .difficulty-pill--hard {
   margin: 0 auto;
   border-radius: 18px;
   background: #173021;
+  cursor: grab;
+  touch-action: none;
+}
+
+#course-canvas.is-dragging {
+  cursor: grabbing;
 }
 
 .shot-summary {
@@ -1167,9 +1252,32 @@ body.theme-dark .difficulty-pill--hard {
     grid-template-columns: 1fr;
   }
 
+  .panel-resize-handle--vertical,
+  .panel-resize-handle--horizontal {
+    display: none;
+  }
+
   .problem-panel,
   .editor-panel {
     min-height: auto;
+    height: auto;
+  }
+
+  .app-shell.is-gameplay .game-shell,
+  .app-shell.is-gameplay .challenge-screen,
+  .app-shell.is-gameplay .golf-screen,
+  .challenge-layout {
+    height: auto;
+    overflow: visible;
+  }
+
+  .editor-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .editor-top-shell {
+    min-height: 0;
   }
 
   .code-editor {

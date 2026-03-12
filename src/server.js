@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createAppError,
+  advanceQuestion,
   createRoom,
   getBootstrapPayload,
   getRoomState,
@@ -198,7 +199,19 @@ const server = http.createServer(async (request, response) => {
       const result = submitAnswer({
         roomCode,
         playerId: body.playerId,
-        submission: body.code
+        submission: body.code,
+        scope: body.scope
+      });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/next-question$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = advanceQuestion({
+        roomCode,
+        playerId: body.playerId
       });
       sendJson(response, 200, result);
       return;

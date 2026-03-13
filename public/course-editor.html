@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MiniGode Course Editor</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/courseEditor.css">
+  </head>
+  <body>
+    <button id="page-theme-toggle-btn" type="button" class="page-theme-toggle"></button>
+
+    <div class="course-editor-shell">
+      <header class="course-editor-hero">
+        <div>
+          <p class="eyebrow">Local course editor</p>
+          <h1>Design courses visually</h1>
+          <p class="course-editor-hero__copy">
+            Load an existing course, drag out walls and sand traps, move the tee and hole, then copy the exported
+            course object back into <code>src/data/courses.js</code>.
+          </p>
+        </div>
+        <div class="course-editor-hero__actions">
+          <a href="/" class="ghost">Back to game</a>
+        </div>
+      </header>
+
+      <main class="course-editor-main">
+        <section class="course-editor-workspace">
+          <section class="panel course-editor-stage">
+            <div class="course-editor-toolbar">
+              <label class="course-editor-toolbar__field">
+                Existing course
+                <select id="course-template-select"></select>
+              </label>
+              <div class="course-editor-toolbar__actions">
+                <button id="load-course-btn" type="button" class="secondary">Load selected</button>
+                <button id="new-course-btn" type="button" class="secondary">New blank</button>
+                <button id="duplicate-course-btn" type="button" class="secondary">Duplicate draft</button>
+                <button id="grid-toggle-btn" type="button" class="secondary course-editor-grid-toggle"></button>
+                <button id="reset-course-btn" type="button" class="ghost-inline">Reset draft</button>
+              </div>
+            </div>
+
+            <section class="course-editor-tools" aria-label="Tool palette">
+              <div id="tool-palette" class="course-editor-tool-palette"></div>
+            </section>
+
+            <div class="course-editor-canvas-shell">
+              <canvas id="course-editor-canvas" aria-label="Course editor canvas"></canvas>
+            </div>
+
+            <div class="course-editor-statusbar">
+              <span id="editor-status">Loading course catalog...</span>
+              <span id="editor-pointer">x: -, y: -</span>
+            </div>
+
+            <div class="course-editor-help">
+              <article>
+                <strong>Select</strong>
+                <p>Click existing shapes to edit them. Drag inside a selected item to reposition it.</p>
+              </article>
+              <article>
+                <strong>Walls / Sand / Accent</strong>
+                <p>Click and drag on the canvas to create a rectangle. Fine-tune exact numbers below.</p>
+              </article>
+              <article>
+                <strong>Tee / Hole</strong>
+                <p>Choose the tool, then click anywhere on the course to place the tee or hole center.</p>
+              </article>
+            </div>
+          </section>
+
+          <aside class="course-editor-inspector">
+            <section class="panel course-editor-panel course-editor-panel--selection">
+              <p class="panel-kicker">Selected item</p>
+              <h2 id="selection-title">Nothing selected</h2>
+              <div id="selection-panel" class="course-editor-selection"></div>
+            </section>
+
+            <section class="panel course-editor-panel course-editor-panel--meta">
+              <p class="panel-kicker">Course details</p>
+              <h2>Metadata</h2>
+              <label>
+                Course id
+                <input id="course-id-input" type="text" maxlength="64" placeholder="new-course">
+              </label>
+              <label>
+                Name
+                <input id="course-name-input" type="text" maxlength="80" placeholder="New Course">
+              </label>
+              <label>
+                Description
+                <textarea id="course-description-input" rows="4" maxlength="240" placeholder="Short course description"></textarea>
+              </label>
+
+              <div class="course-editor-grid">
+                <label>
+                  Width
+                  <input id="course-width-input" type="number" min="320" max="2400" step="10">
+                </label>
+                <label>
+                  Height
+                  <input id="course-height-input" type="number" min="240" max="1800" step="10">
+                </label>
+              </div>
+              <p class="course-editor-note">Custom values are rounded to the nearest 10 when committed.</p>
+            </section>
+          </aside>
+        </section>
+
+        <section class="course-editor-secondary-grid">
+          <section class="panel course-editor-panel course-editor-panel--layers">
+            <p class="panel-kicker">Course objects</p>
+            <h2>Layers</h2>
+            <div id="object-list" class="course-editor-object-list"></div>
+          </section>
+
+          <section class="panel course-editor-panel course-editor-panel--export">
+            <p class="panel-kicker">Export</p>
+            <h2>Copy back into the repo</h2>
+            <div class="course-editor-export-actions">
+              <button id="copy-object-btn" type="button" class="primary">Copy course object</button>
+              <button id="copy-json-btn" type="button" class="secondary">Copy JSON</button>
+              <button id="download-json-btn" type="button" class="secondary">Download JSON</button>
+            </div>
+            <label>
+              Course object
+              <textarea id="export-output" class="course-editor-code" rows="14" readonly></textarea>
+            </label>
+          </section>
+
+          <section class="panel course-editor-panel course-editor-panel--import">
+            <p class="panel-kicker">Import</p>
+            <h2>Load a draft</h2>
+            <label>
+              JSON input
+              <textarea
+                id="import-input"
+                class="course-editor-code"
+                rows="10"
+                placeholder='Paste a course JSON object here, then click "Load JSON".'
+              ></textarea>
+            </label>
+            <button id="import-json-btn" type="button" class="secondary">Load JSON</button>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/courseEditor.js"></script>
+  </body>
+</html>

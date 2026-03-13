@@ -2,6 +2,7 @@ import {
   advanceQuestion as advanceQuestionRequest,
   createRoom,
   fetchBootstrap,
+  fetchCourseCatalog,
   getRoomState as getRoomStateRequest,
   joinRoom,
   notifyDisconnect,
@@ -13,6 +14,12 @@ import {
 } from "./api.js";
 import { CourseRenderer } from "./courseRenderer.js";
 import { createEditorController, EDITOR_THEMES, getEditorTheme } from "./editorController.js";
+import {
+  createSpawnBall as createPracticeSpawnBall,
+  getDistanceToHole as getPracticeDistanceToHole,
+  getProgressPercent as getPracticeProgressPercent,
+  simulateSwing as simulatePracticeSwing
+} from "./practicePhysics.js";
 import { createDragAim, getShotFromDrag } from "./shotAim.js";
 
 const SESSION_KEY = "minigode-session";
@@ -27,8 +34,10 @@ migrateEditorLayoutStorage();
 
 const state = {
   bootstrap: null,
+  courseCatalog: [],
   room: null,
   me: null,
+  practiceSession: null,
   session: loadStoredSession(),
   codeDraft: "",
   activeQuestionAssignment: null,
@@ -47,10 +56,7 @@ const state = {
   problemPaneWidth: loadStorage(PROBLEM_PANE_WIDTH_KEY),
   editorTopHeight: loadStorage(EDITOR_TOP_HEIGHT_KEY),
   dragAim: null,
-  shot: {
-    angle: -0.75,
-    power: 0.48
-  },
+  shot: createDefaultShot(),
   swingAnimating: false,
   eventSource: null
 };
@@ -146,6 +152,73 @@ function formatInlineCode(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function createDefaultShot() {
+  return {
+    angle: -0.75,
+    power: 0.48
+  };
+}
+
+function isPracticeMode() {
+  return Boolean(state.practiceSession);
+}
+
+function getActiveGolfCourse() {
+  return state.room?.course ?? state.practiceSession?.course ?? null;
+}
+
+function getActiveGolfPlayer() {
+  return state.me ?? state.practiceSession?.player ?? null;
+}
+
+function getActiveGolfPlayers() {
+  return state.room?.players ?? (state.practiceSession ? [state.practiceSession.player] : []);
+}
+
+function getCatalogCourseById(courseId) {
+  return state.courseCatalog.find((course) => course.id === courseId) ?? null;
+}
+
+function createPracticePlayer(course, name = "Practice") {
+  const ball = createPracticeSpawnBall(course);
+
+  return {
+    id: "practice-player",
+    name: String(name ?? "").trim() || "Practice",
+    color: "#ff7a59",
+    strokes: 0,
+    ball,
+    distanceToHole: getPracticeDistanceToHole(course, ball),
+    progressPercent: getPracticeProgressPercent(course, ball)
+  };
+}
+
+function createPracticeSession(course, name) {
+  const clonedCourse = deepClone(course);
+  return {
+    course: clonedCourse,
+    player: createPracticePlayer(clonedCourse, name)
+  };
+}
+
+function resetPracticeHole() {
+  if (!state.practiceSession) {
+    return;
+  }
+
+  state.practiceSession.player = createPracticePlayer(
+    state.practiceSession.course,
+    state.practiceSession.player.name
+  );
+  state.dragAim = null;
+  state.swingAnimating = false;
+  state.shot = createDefaultShot();
 }
 
 function syncRangeFill(input) {
@@ -257,6 +330,8 @@ function createShell() {
   const root = document.getElementById("app");
   root.innerHTML = `
     <div class="app-shell">
+      <button id="page-theme-toggle-btn" type="button" class="page-theme-toggle"></button>
+
       <header class="hero">
         <p class="eyebrow">Mini-golf meets coding interviews</p>
         <h1>MiniGode</h1>
@@ -281,6 +356,9 @@ function createShell() {
                 <strong>Switch to the course</strong>
                 <p>Spend credits to aim around walls, avoid sand, and finish first.</p>
               </article>
+            </div>
+            <div class="intro-actions">
+              <a href="/course-editor.html" class="course-editor-launch">Open course editor</a>
             </div>
           </section>
 
@@ -308,6 +386,39 @@ function createShell() {
               <select id="create-time-limit" name="timeLimitMinutes"></select>
             </label>
             <button type="submit" class="primary">Create room</button>
+          </form>
+
+          <form id="solo-form" class="panel solo-form">
+            <p class="panel-kicker">Solo mode</p>
+            <h2>Play on your own</h2>
+            <label>
+              Your name
+              <input id="solo-name-input" name="name" maxlength="24" value="Solo" required>
+            </label>
+            <label>
+              Mode
+              <select id="solo-mode" name="mode">
+                <option value="code-golf">Code + golf</option>
+                <option value="golf-practice">Golf practice</option>
+              </select>
+            </label>
+            <div id="solo-code-settings" class="solo-form__code-settings">
+              <label>
+                Difficulty
+                <select id="solo-difficulty" name="difficulty"></select>
+              </label>
+              <label>
+                Question bank
+                <select id="solo-question-source" name="questionSource"></select>
+              </label>
+            </div>
+            <label>
+              Course
+              <select id="solo-course" name="courseId"></select>
+            </label>
+            <p id="solo-mode-note" class="muted solo-form__mode-note"></p>
+            <button type="submit" class="primary">Play solo</button>
+            <div id="solo-notice" class="inline-notice" hidden></div>
           </form>
 
           <form id="join-form" class="panel">
@@ -434,7 +545,6 @@ function createShell() {
 
         <aside id="chat-dock" class="chat-dock" hidden>
           <div class="chat-hotbar">
-            <button id="mode-toggle-btn" type="button" class="chat-toggle chat-toggle--mode"></button>
             <button id="chat-toggle-btn" type="button" class="chat-toggle">Chat</button>
           </div>
 
@@ -466,15 +576,25 @@ function createShell() {
 
   elements = {
     appShell: root.querySelector(".app-shell"),
+    themeToggleButton: document.getElementById("page-theme-toggle-btn"),
     hero: root.querySelector(".hero"),
     landingView: document.getElementById("landing-view"),
     roomStage: document.getElementById("room-stage"),
     createForm: document.getElementById("create-form"),
+    soloForm: document.getElementById("solo-form"),
     joinForm: document.getElementById("join-form"),
     createDifficulty: document.getElementById("create-difficulty"),
     createQuestionSource: document.getElementById("create-question-source"),
     createCourse: document.getElementById("create-course"),
     createTimeLimit: document.getElementById("create-time-limit"),
+    soloNameInput: document.getElementById("solo-name-input"),
+    soloMode: document.getElementById("solo-mode"),
+    soloDifficulty: document.getElementById("solo-difficulty"),
+    soloQuestionSource: document.getElementById("solo-question-source"),
+    soloCourse: document.getElementById("solo-course"),
+    soloCodeSettings: document.getElementById("solo-code-settings"),
+    soloModeNote: document.getElementById("solo-mode-note"),
+    soloNotice: document.getElementById("solo-notice"),
     landingNotice: document.getElementById("landing-notice"),
     waitingView: document.getElementById("waiting-view"),
     waitingRoomCode: document.getElementById("waiting-room-code"),
@@ -509,7 +629,6 @@ function createShell() {
     courseCanvas: document.getElementById("course-canvas"),
     golfControlsPanel: document.getElementById("golf-controls-panel"),
     chatDock: document.getElementById("chat-dock"),
-    modeToggleButton: document.getElementById("mode-toggle-btn"),
     chatToggleButton: document.getElementById("chat-toggle-btn"),
     chatPanel: document.getElementById("chat-panel"),
     chatCloseButton: document.getElementById("chat-close-btn"),
@@ -529,6 +648,8 @@ function createShell() {
   applyColorMode();
 
   elements.createForm.addEventListener("submit", onCreateRoom);
+  elements.soloForm.addEventListener("submit", onStartSolo);
+  elements.soloMode.addEventListener("change", syncSoloFormMode);
   elements.joinForm.addEventListener("submit", onJoinRoom);
   elements.startGameButton.addEventListener("click", onStartGame);
   elements.copyRoomButton.addEventListener("click", copyRoomCode);
@@ -544,7 +665,7 @@ function createShell() {
   elements.courseCanvas.addEventListener("pointermove", onCoursePointerMove);
   elements.courseCanvas.addEventListener("pointerup", onCoursePointerUp);
   elements.courseCanvas.addEventListener("pointercancel", onCoursePointerCancel);
-  elements.modeToggleButton.addEventListener("click", onToggleColorMode);
+  elements.themeToggleButton.addEventListener("click", onToggleColorMode);
   elements.chatToggleButton.addEventListener("click", () => setChatOpen(true));
   elements.chatCloseButton.addEventListener("click", () => setChatOpen(false));
   elements.chatEndButton.addEventListener("click", onVoteToEndGame);
@@ -593,14 +714,29 @@ function setEditorValue(value) {
   void codeEditor.setValue(nextValue);
 }
 
-function setNotice(message) {
+function setNotice(message, target = elements.landingNotice) {
   state.notice = message;
-  elements.landingNotice.hidden = !message;
-  elements.landingNotice.textContent = message ?? "";
+  const noticeTargets = [elements.landingNotice, elements.soloNotice].filter(Boolean);
+
+  noticeTargets.forEach((element) => {
+    const isTarget = element === target && Boolean(message);
+    element.hidden = !isTarget;
+    element.textContent = isTarget ? message ?? "" : "";
+  });
 }
 
 function clearNotice() {
   setNotice(null);
+}
+
+function syncSoloFormMode() {
+  const golfPractice = elements.soloMode.value === "golf-practice";
+  elements.soloCodeSettings.hidden = golfPractice;
+  elements.soloDifficulty.disabled = golfPractice;
+  elements.soloQuestionSource.disabled = golfPractice;
+  elements.soloModeNote.textContent = golfPractice
+    ? "Instant local practice with unlimited swings. No room, timer, or coding round."
+    : "Creates a private one-player room and starts it immediately.";
 }
 
 function saveEditorTheme() {
@@ -618,9 +754,9 @@ function getColorModeButtonHint() {
 function applyColorMode() {
   document.body.classList.toggle("theme-dark", state.colorMode === "dark");
   document.body.classList.toggle("theme-light", state.colorMode !== "dark");
-  elements.modeToggleButton.innerHTML = `<span class="mode-toggle-icon" aria-hidden="true">${getColorModeButtonIcon()}</span>`;
-  elements.modeToggleButton.setAttribute("aria-label", getColorModeButtonHint());
-  elements.modeToggleButton.setAttribute("title", getColorModeButtonHint());
+  elements.themeToggleButton.innerHTML = `<span class="mode-toggle-icon" aria-hidden="true">${getColorModeButtonIcon()}</span>`;
+  elements.themeToggleButton.setAttribute("aria-label", getColorModeButtonHint());
+  elements.themeToggleButton.setAttribute("title", getColorModeButtonHint());
 }
 
 function onToggleColorMode() {
@@ -681,6 +817,7 @@ function syncQuestionDraft() {
 }
 
 function applyRoomState(payload) {
+  state.practiceSession = null;
   state.room = payload.room;
   state.me = payload.me;
   state.dragAim = null;
@@ -693,6 +830,10 @@ function applyRoomState(payload) {
 }
 
 function getCurrentStage() {
+  if (state.practiceSession) {
+    return "golf";
+  }
+
   if (!state.room || !state.me) {
     return "home";
   }
@@ -850,6 +991,10 @@ function onResizePointerUp() {
 }
 
 function formatCredits(credits) {
+  if (isPracticeMode()) {
+    return "Unlimited swings";
+  }
+
   if (state.me?.devModeEnabled) {
     return "Unlimited swings";
   }
@@ -858,6 +1003,10 @@ function formatCredits(credits) {
 }
 
 function canTakeSwing() {
+  if (isPracticeMode()) {
+    return Boolean(state.practiceSession?.player && !state.practiceSession.player.ball.sunk);
+  }
+
   return Boolean(
     state.room &&
       state.me &&
@@ -992,6 +1141,7 @@ function chatMessageMarkup(message) {
 
 function renderChatDock() {
   const inRoom = Boolean(state.room && state.me && !isRoomOver());
+  elements.themeToggleButton.classList.toggle("page-theme-toggle--chat-offset", inRoom);
   elements.chatDock.hidden = !inRoom;
 
   if (!inRoom) {
@@ -1033,6 +1183,20 @@ function getCourseStatusCard() {
   const winner = leaders.length === 1 ? leaders[0] : null;
   const remainingPlayers = getRemainingPlayersCount();
   const opponentsStillPlaying = state.me.ball.sunk ? remainingPlayers : Math.max(remainingPlayers - 1, 0);
+
+  if (state.room.players.length === 1) {
+    if (state.me.ball.sunk) {
+      return {
+        tone: "complete",
+        eyebrow: "Hole Complete",
+        title: "You finished the hole.",
+        body: `You cleared the course in ${state.me.strokes} stroke${state.me.strokes === 1 ? "" : "s"}.`,
+        pill: "Complete"
+      };
+    }
+
+    return null;
+  }
 
   if (state.room.status === "finished") {
     if (state.me.finishPlace === 1) {
@@ -1615,7 +1779,104 @@ function renderEditor() {
     });
 }
 
+function practiceStatusMarkup(player) {
+  const title = player.ball.sunk ? "Hole cleared." : "Unlimited swings enabled.";
+  const body = player.ball.sunk
+    ? `You finished the hole in ${player.strokes} stroke${player.strokes === 1 ? "" : "s"}. Reset the hole to run it again.`
+    : `Keep firing until you like the line. You are ${player.distanceToHole} from the cup with ${player.progressPercent}% progress.`;
+
+  return `
+    <section class="course-status-card course-status-card--clubhouse">
+      <div class="course-status-card__header">
+        <div>
+          <p class="panel-kicker">Golf Practice</p>
+          <h3>${escapeHtml(title)}</h3>
+        </div>
+        <span class="course-status-pill">${player.ball.sunk ? "Complete" : "Practice"}</span>
+      </div>
+      <p>${escapeHtml(body)}</p>
+    </section>
+  `;
+}
+
+function renderPracticeGolfControls() {
+  const player = state.practiceSession.player;
+  const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
+  const powerPercent = Math.round(state.shot.power * 100);
+
+  elements.golfControlsPanel.innerHTML = `
+    <p class="panel-kicker">Solo practice</p>
+    <h2>Work the hole</h2>
+    <div class="shot-summary">
+      <span>Unlimited swings</span>
+      <span>${player.strokes} stroke${player.strokes === 1 ? "" : "s"}</span>
+    </div>
+
+    ${practiceStatusMarkup(player)}
+
+    ${
+      player.ball.sunk
+        ? ""
+        : `
+          <div class="shot-controls">
+            <label>
+              Angle
+              <span id="angle-value" class="value-label">${angleDegrees}&deg;</span>
+              <input id="angle-input" type="range" min="0" max="359" value="${angleDegrees}">
+            </label>
+            <label>
+              Power
+              <span id="power-value" class="value-label">${powerPercent}%</span>
+              <input id="power-input" type="range" min="5" max="100" value="${powerPercent}">
+            </label>
+          </div>
+        `
+    }
+
+    <section class="practice-stats">
+      <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.practiceSession.course.name)}</strong></div>
+      <div class="setting-row"><span>Progress</span><strong>${player.ball.sunk ? "100%" : `${player.progressPercent}%`}</strong></div>
+      <div class="setting-row"><span>Distance</span><strong>${player.ball.sunk ? "In the cup" : `${player.distanceToHole} left`}</strong></div>
+    </section>
+
+    <div class="practice-actions">
+      <button id="swing-btn" type="button" class="primary"${player.ball.sunk ? " hidden" : ""}>Take swing</button>
+      <button id="practice-reset-btn" type="button" class="secondary"${state.busy || state.swingAnimating ? " disabled" : ""}>Reset hole</button>
+      <button id="practice-home-btn" type="button" class="course-switch-button"${state.busy || state.swingAnimating ? " disabled" : ""}>Back home</button>
+    </div>
+  `;
+
+  const angleInput = document.getElementById("angle-input");
+  const powerInput = document.getElementById("power-input");
+  const swingButton = document.getElementById("swing-btn");
+
+  angleInput?.addEventListener("input", () => {
+    state.shot.angle = (Number(angleInput.value) * Math.PI) / 180;
+    syncShotControlLabels();
+    drawCourse();
+  });
+
+  powerInput?.addEventListener("input", () => {
+    state.shot.power = Number(powerInput.value) / 100;
+    syncShotControlLabels();
+    drawCourse();
+  });
+
+  swingButton?.addEventListener("click", onTakeSwing);
+  if (swingButton) {
+    swingButton.disabled = state.busy || state.swingAnimating || !canTakeSwing();
+  }
+  document.getElementById("practice-reset-btn")?.addEventListener("click", onResetPracticeHole);
+  document.getElementById("practice-home-btn")?.addEventListener("click", () => leavePractice());
+  syncShotControlLabels();
+}
+
 function renderGolfControls() {
+  if (isPracticeMode()) {
+    renderPracticeGolfControls();
+    return;
+  }
+
   const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
   const powerPercent = Math.round(state.shot.power * 100);
   const spectatorMode = state.me.ball.sunk || isRoomOver();
@@ -1695,18 +1956,29 @@ function renderGolfControls() {
 }
 
 function drawCourse() {
-  if (!state.room || !state.me || state.room.status === "waiting" || state.gameScreen !== "golf") {
+  const course = getActiveGolfCourse();
+  const player = getActiveGolfPlayer();
+  if (!course || !player || state.gameScreen !== "golf") {
+    return;
+  }
+
+  if (state.room && state.room.status === "waiting") {
     return;
   }
 
   elements.courseCanvas.classList.toggle("is-dragging", Boolean(state.dragAim));
 
   renderer.render({
-    course: state.room.course,
-    players: state.room.players,
-    meId: state.me.id,
-    mePlayer: state.room.players.find((player) => player.id === state.me.id),
-    preview: state.room.status === "active" && !state.me.ball.sunk && !state.swingAnimating ? state.shot : null,
+    course,
+    players: getActiveGolfPlayers(),
+    meId: player.id,
+    mePlayer: player,
+    preview:
+      (isPracticeMode() || state.room.status === "active") &&
+      !player.ball.sunk &&
+      !state.swingAnimating
+        ? state.shot
+        : null,
     dragAim: state.dragAim
   });
 }
@@ -1722,7 +1994,7 @@ function renderGame() {
 
   if (showingGolf) {
     renderGolfControls();
-    elements.courseName.textContent = state.room.course.name;
+    elements.courseName.textContent = getActiveGolfCourse()?.name ?? "";
     requestAnimationFrame(() => drawCourse());
   } else {
     renderProblemPanel();
@@ -1764,6 +2036,118 @@ function renderViews() {
   }
 
   renderGame();
+}
+
+function resetSharedGameState() {
+  clearCopyRoomFeedback();
+  state.codeDraft = "";
+  state.activeQuestionAssignment = null;
+  state.evaluation = null;
+  state.busy = false;
+  state.chatBusy = false;
+  state.chatDraft = "";
+  state.chatNotice = null;
+  state.chatOpen = false;
+  state.editorReady = false;
+  state.gameScreen = "challenge";
+  state.dragAim = null;
+  state.swingAnimating = false;
+  state.shot = createDefaultShot();
+}
+
+function startPracticeSession(courseId, name) {
+  const course = getCatalogCourseById(courseId);
+  if (!course) {
+    throw new Error("Selected course is unavailable.");
+  }
+
+  state.eventSource?.close();
+  state.eventSource = null;
+  state.room = null;
+  state.me = null;
+  state.session = null;
+  saveStorage(SESSION_KEY, null);
+  resetSharedGameState();
+  state.practiceSession = createPracticeSession(course, name);
+  state.gameScreen = "golf";
+  setEditorValue("");
+  renderViews();
+}
+
+function leavePractice({ notice = null } = {}) {
+  state.practiceSession = null;
+  resetSharedGameState();
+  renderViews();
+
+  if (notice) {
+    setNotice(notice, elements.soloNotice);
+  } else {
+    clearNotice();
+  }
+}
+
+function onResetPracticeHole() {
+  resetPracticeHole();
+  renderGolfControls();
+  drawCourse();
+}
+
+async function onStartSolo(event) {
+  event.preventDefault();
+  if (state.busy) {
+    return;
+  }
+
+  clearNotice();
+  const payload = Object.fromEntries(new FormData(elements.soloForm).entries());
+
+  if (payload.mode === "golf-practice") {
+    try {
+      startPracticeSession(payload.courseId, payload.name);
+    } catch (error) {
+      setNotice(error.message, elements.soloNotice);
+    }
+    return;
+  }
+
+  let createdSession = null;
+  const submitButton = elements.soloForm.querySelector('button[type="submit"]');
+  state.busy = true;
+  submitButton.disabled = true;
+
+  try {
+    const createResponse = await createRoom({
+      name: payload.name,
+      difficulty: payload.difficulty,
+      questionSource: payload.questionSource,
+      courseId: payload.courseId,
+      timeLimitMinutes: 0
+    });
+    createdSession = {
+      roomCode: createResponse.roomCode,
+      playerId: createResponse.playerId,
+      sessionId: createResponse.sessionId
+    };
+    persistSession(createdSession);
+
+    const startResponse = await startRoomRequest(
+      createdSession.roomCode,
+      createdSession.playerId,
+      createdSession.sessionId
+    );
+    state.gameScreen = "challenge";
+    applyRoomState(startResponse.state);
+    connectEvents();
+  } catch (error) {
+    if (createdSession) {
+      saveStorage(SESSION_KEY, null);
+      state.session = null;
+    }
+    setNotice(error.message, elements.soloNotice);
+  } finally {
+    state.busy = false;
+    submitButton.disabled = false;
+  }
 }
 
 async function onCreateRoom(event) {
@@ -1905,7 +2289,42 @@ async function onAdvanceQuestion() {
 }
 
 async function onTakeSwing() {
-  if (!state.session || state.busy || state.swingAnimating || !canTakeSwing()) {
+  if (state.busy || state.swingAnimating || !canTakeSwing()) {
+    return;
+  }
+
+  if (isPracticeMode()) {
+    const player = state.practiceSession.player;
+    const simulation = simulatePracticeSwing({
+      course: state.practiceSession.course,
+      ball: player.ball,
+      angle: state.shot.angle,
+      power: state.shot.power
+    });
+
+    state.busy = true;
+    player.strokes += 1;
+    player.ball = simulation.ball;
+    player.distanceToHole = getPracticeDistanceToHole(state.practiceSession.course, player.ball);
+    player.progressPercent = getPracticeProgressPercent(state.practiceSession.course, player.ball);
+    state.swingAnimating = true;
+    renderGolfControls();
+
+    requestAnimationFrame(() => {
+      drawCourse();
+      renderer.playSwing(simulation.path, () => {
+        state.busy = false;
+        state.swingAnimating = false;
+        if (getCurrentStage() === "golf" && isPracticeMode()) {
+          drawCourse();
+          renderGolfControls();
+        }
+      });
+    });
+    return;
+  }
+
+  if (!state.session) {
     return;
   }
 
@@ -1978,6 +2397,17 @@ function syncShotControlLabels() {
 }
 
 function canAimOnCourse() {
+  if (isPracticeMode()) {
+    const player = state.practiceSession?.player;
+    return Boolean(
+      player &&
+        state.gameScreen === "golf" &&
+        !player.ball.sunk &&
+        !state.busy &&
+        !state.swingAnimating
+    );
+  }
+
   return Boolean(
     state.room &&
       state.me &&
@@ -2012,14 +2442,16 @@ function onCoursePointerDown(event) {
     return;
   }
 
-  const worldPoint = renderer.screenToWorld(event, state.room.course);
-  const distanceToBall = Math.hypot(worldPoint.x - state.me.ball.x, worldPoint.y - state.me.ball.y);
+  const course = getActiveGolfCourse();
+  const player = getActiveGolfPlayer();
+  const worldPoint = renderer.screenToWorld(event, course);
+  const distanceToBall = Math.hypot(worldPoint.x - player.ball.x, worldPoint.y - player.ball.y);
   if (distanceToBall > DRAG_START_RADIUS) {
     return;
   }
 
   event.preventDefault();
-  state.dragAim = createDragAim(state.me.ball, event.pointerId);
+  state.dragAim = createDragAim(player.ball, event.pointerId);
   elements.courseCanvas.setPointerCapture?.(event.pointerId);
   drawCourse();
 }
@@ -2029,7 +2461,7 @@ function onCoursePointerMove(event) {
     return;
   }
 
-  const worldPoint = renderer.screenToWorld(event, state.room.course);
+  const worldPoint = renderer.screenToWorld(event, getActiveGolfCourse());
   state.dragAim.current = worldPoint;
   updateShotFromDrag(state.dragAim.start, worldPoint);
   drawCourse();
@@ -2049,7 +2481,7 @@ function onCoursePointerUp(event) {
     return;
   }
 
-  const worldPoint = renderer.screenToWorld(event, state.room.course);
+  const worldPoint = renderer.screenToWorld(event, getActiveGolfCourse());
   const updated = updateShotFromDrag(state.dragAim.start, worldPoint);
   clearDragAim(event.pointerId);
 
@@ -2124,19 +2556,8 @@ function clearCopyRoomFeedback() {
 }
 
 function onRoomLifecycleReset() {
-  clearCopyRoomFeedback();
-  state.codeDraft = "";
-  state.activeQuestionAssignment = null;
-  state.evaluation = null;
-  state.busy = false;
-  state.chatBusy = false;
-  state.chatDraft = "";
-  state.chatNotice = null;
-  state.chatOpen = false;
-  state.editorReady = false;
-  state.gameScreen = "challenge";
-  state.dragAim = null;
-  state.swingAnimating = false;
+  state.practiceSession = null;
+  resetSharedGameState();
 }
 
 function leaveRoom({ notice = null } = {}) {
@@ -2242,7 +2663,9 @@ async function init() {
   window.addEventListener("pagehide", handlePageHide);
 
   try {
-    state.bootstrap = await fetchBootstrap();
+    const [bootstrap, courseCatalog] = await Promise.all([fetchBootstrap(), fetchCourseCatalog()]);
+    state.bootstrap = bootstrap;
+    state.courseCatalog = courseCatalog.courses ?? [];
   } catch (error) {
     setNotice(error.message);
     return;
@@ -2258,13 +2681,19 @@ async function init() {
   elements.createQuestionSource.innerHTML = questionSourceOrder
     .map((source) => `<option value="${source}">${formatQuestionSource(source)}</option>`)
     .join("");
+  elements.soloQuestionSource.innerHTML = questionSourceOrder
+    .map((source) => `<option value="${source}">${formatQuestionSource(source)}</option>`)
+    .join("");
   if (questionSourceOrder.includes("both")) {
     elements.createQuestionSource.value = "both";
+    elements.soloQuestionSource.value = "both";
   }
 
-  elements.createCourse.innerHTML = state.bootstrap.courses
+  const courseOptions = state.bootstrap.courses
     .map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`)
     .join("");
+  elements.createCourse.innerHTML = courseOptions;
+  elements.soloCourse.innerHTML = courseOptions;
 
   elements.createTimeLimit.innerHTML = state.bootstrap.timeLimitMinutesOptions
     .map((minutes) => {
@@ -2272,6 +2701,9 @@ async function init() {
       return `<option value="${minutes}">${escapeHtml(label)}</option>`;
     })
     .join("");
+  elements.soloDifficulty.innerHTML = elements.createDifficulty.innerHTML;
+  elements.soloDifficulty.value = elements.createDifficulty.value;
+  syncSoloFormMode();
 
   await restoreSession();
   renderViews();

@@ -18,6 +18,10 @@ export function fetchBootstrap() {
   return requestJson("/api/bootstrap");
 }
 
+export function fetchCourseCatalog() {
+  return requestJson("/api/courses");
+}
+
 export function createRoom(body) {
   return requestJson("/api/rooms", {
     method: "POST",

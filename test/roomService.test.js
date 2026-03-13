@@ -15,6 +15,11 @@ import {
   submitAnswer
 } from "../src/services/roomService.js";
 
+const MEADOW_RUN_SINK_SHOT = {
+  angle: (-1 * Math.PI) / 180,
+  power: 0.8
+};
+
 test.afterEach(() => {
   resetRoomServiceState();
 });
@@ -470,4 +475,167 @@ test("dev mode players keep unlimited swings", () => {
 
   assert.equal(swing.state.me.swingCredits, 999);
   assert.equal(swing.state.me.strokes, 1);
+});
+
+test("single-player rounds record completion details when the hole is finished", () => {
+  const created = createRoom({
+    name: "dev$mode!",
+    difficulty: "easy",
+    courseId: "meadow-run",
+    questionSource: "local"
+  });
+
+  startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  const finished = takeSwing({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    ...MEADOW_RUN_SINK_SHOT
+  });
+
+  assert.equal(finished.state.room.status, "finished");
+  assert.equal(finished.state.room.winnerId, created.playerId);
+  assert.equal(finished.state.room.finishedPlayers, 1);
+  assert.ok(finished.state.room.completedAt);
+  assert.equal(finished.state.me.ball.sunk, true);
+  assert.equal(finished.state.me.finishPlace, 1);
+  assert.ok(finished.state.me.finishedAt);
+});
+
+test("rounds stay active until every remaining player finishes the hole", () => {
+  const created = createRoom({
+    name: "dev$mode!",
+    difficulty: "easy",
+    courseId: "meadow-run",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  const hostFinished = takeSwing({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    ...MEADOW_RUN_SINK_SHOT
+  });
+
+  assert.equal(hostFinished.state.room.status, "active");
+  assert.equal(hostFinished.state.room.winnerId, created.playerId);
+  assert.equal(hostFinished.state.room.finishedPlayers, 1);
+  assert.equal(hostFinished.state.me.finishPlace, 1);
+
+  assert.throws(
+    () =>
+      submitAnswer({
+        roomCode: created.roomCode,
+        playerId: created.playerId,
+        sessionId: created.sessionId,
+        submission: SOLUTIONS.contains_duplicate
+      }),
+    /already finished the hole/
+  );
+
+  assert.throws(
+    () =>
+      takeSwing({
+        roomCode: created.roomCode,
+        playerId: created.playerId,
+        sessionId: created.sessionId,
+        ...MEADOW_RUN_SINK_SHOT
+      }),
+    /already finished the hole/
+  );
+
+  const guestState = getRoomState({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  const guestQuestionName = guestState.me.currentQuestion.functionName;
+  const guestSolved = submitAnswer({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    submission: SOLUTIONS[guestQuestionName]
+  });
+
+  assert.equal(guestSolved.evaluation.passed, true);
+  assert.equal(guestSolved.state.me.swingCredits, 1);
+
+  const guestFinished = takeSwing({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    ...MEADOW_RUN_SINK_SHOT
+  });
+
+  assert.equal(guestFinished.state.room.status, "finished");
+  assert.equal(guestFinished.state.room.finishedPlayers, 2);
+  assert.ok(guestFinished.state.room.completedAt);
+  assert.equal(guestFinished.state.me.finishPlace, 2);
+  assert.deepEqual(
+    guestFinished.state.room.players.map((player) => player.finishPlace),
+    [1, 2]
+  );
+});
+
+test("a round finishes once unfinished guests leave and all remaining players are done", () => {
+  const created = createRoom({
+    name: "dev$mode!",
+    difficulty: "easy",
+    courseId: "meadow-run",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  takeSwing({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    ...MEADOW_RUN_SINK_SHOT
+  });
+
+  disconnectPlayerSession({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    immediate: true
+  });
+
+  const hostState = getRoomState({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(hostState.room.status, "finished");
+  assert.equal(hostState.room.finishedPlayers, 1);
+  assert.ok(hostState.room.completedAt);
+  assert.equal(hostState.room.players.length, 1);
+  assert.equal(hostState.me.finishPlace, 1);
 });

@@ -777,7 +777,28 @@ function formatCredits(credits) {
 }
 
 function canTakeSwing() {
-  return Boolean(state.me && (state.me.devModeEnabled || state.me.swingCredits >= 1));
+  return Boolean(
+    state.room &&
+      state.me &&
+      state.room.status === "active" &&
+      !state.me.ball.sunk &&
+      (state.me.devModeEnabled || state.me.swingCredits >= 1)
+  );
+}
+
+function formatPlace(value) {
+  const remainder10 = value % 10;
+  const remainder100 = value % 100;
+  if (remainder10 === 1 && remainder100 !== 11) {
+    return `${value}st`;
+  }
+  if (remainder10 === 2 && remainder100 !== 12) {
+    return `${value}nd`;
+  }
+  if (remainder10 === 3 && remainder100 !== 13) {
+    return `${value}rd`;
+  }
+  return `${value}th`;
 }
 
 function getEndVoteSummary() {
@@ -852,17 +873,134 @@ function renderChatDock() {
   }
 }
 
-function getWinnerMessage() {
-  if (!state.room?.winnerId) {
-    return "";
+function getRemainingPlayersCount() {
+  if (!state.room) {
+    return 0;
+  }
+
+  return state.room.players.filter((player) => !player.ball.sunk).length;
+}
+
+function getCourseStatusCard() {
+  if (!state.room || !state.me) {
+    return null;
   }
 
   const winner = state.room.players.find((player) => player.id === state.room.winnerId);
-  if (!winner) {
-    return "Hole complete.";
+  const remainingPlayers = getRemainingPlayersCount();
+  const opponentsStillPlaying = state.me.ball.sunk ? remainingPlayers : Math.max(remainingPlayers - 1, 0);
+
+  if (state.room.status === "finished") {
+    if (state.me.finishPlace === 1) {
+      return {
+        tone: "complete",
+        eyebrow: "Round Complete",
+        title: "You finished first.",
+        body: `The whole lobby is in the hole. Final standings are locked in at ${state.me.strokes} strokes.`,
+        pill: "Winner"
+      };
+    }
+
+    return {
+      tone: "complete",
+      eyebrow: "Round Complete",
+      title: `You finished ${formatPlace(state.me.finishPlace ?? state.room.players.length)}.`,
+      body: "Everyone has finished the hole. Final standings are below.",
+      pill: state.me.finishPlace ? formatPlace(state.me.finishPlace) : "Complete"
+    };
   }
 
-  return winner.id === state.me.id ? "You completed the hole." : `${winner.name} completed the hole.`;
+  if (state.me.ball.sunk) {
+    return {
+      tone: "clubhouse",
+      eyebrow: "In The Clubhouse",
+      title: state.me.finishPlace === 1 ? "You set the pace." : `You finished ${formatPlace(state.me.finishPlace ?? 1)}.`,
+      body:
+        remainingPlayers === 0
+          ? "The rest of the room is catching up."
+          : `Watch ${remainingPlayers} remaining player${remainingPlayers === 1 ? "" : "s"} finish the hole from the course view.`,
+      pill: state.me.finishPlace ? formatPlace(state.me.finishPlace) : "Finished"
+    };
+  }
+
+  if (winner) {
+    return {
+      tone: "race",
+      eyebrow: "Race Update",
+      title: `${winner.name} finished first.`,
+      body:
+        opponentsStillPlaying === 0
+          ? "You are the last player still working the hole."
+          : `${opponentsStillPlaying} other player${opponentsStillPlaying === 1 ? "" : "s"} remain between you and the cup.`,
+      pill: "Still playing"
+    };
+  }
+
+  return null;
+}
+
+function courseStatusCardMarkup() {
+  const status = getCourseStatusCard();
+  if (!status) {
+    return "";
+  }
+
+  return `
+    <section class="course-status-card course-status-card--${status.tone}">
+      <div class="course-status-card__header">
+        <div>
+          <p class="panel-kicker">${escapeHtml(status.eyebrow)}</p>
+          <h3>${escapeHtml(status.title)}</h3>
+        </div>
+        <span class="course-status-pill">${escapeHtml(status.pill)}</span>
+      </div>
+      <p>${escapeHtml(status.body)}</p>
+    </section>
+  `;
+}
+
+function playerStandingMarkup(player, index) {
+  const statusLabel = player.finishPlace
+    ? `Finished ${formatPlace(player.finishPlace)}`
+    : `${player.distanceToHole} from the hole`;
+  const secondaryLabel = player.finishPlace
+    ? `${player.strokes} stroke${player.strokes === 1 ? "" : "s"}`
+    : `${player.strokes} stroke${player.strokes === 1 ? "" : "s"} • ${player.progressPercent}% progress`;
+
+  return `
+    <article class="standing-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
+      <div class="standing-row__identity">
+        <span class="standing-rank">${index + 1}</span>
+        <span class="player-color" style="background:${player.color}"></span>
+        <div>
+          <strong>${escapeHtml(player.name)}</strong>
+          <p>${escapeHtml(secondaryLabel)}</p>
+        </div>
+      </div>
+      <span class="standing-row__status">${escapeHtml(statusLabel)}</span>
+    </article>
+  `;
+}
+
+function standingsPanelMarkup() {
+  if (!state.room?.players?.length) {
+    return "";
+  }
+
+  return `
+    <section class="standings-panel">
+      <div class="standings-panel__header">
+        <div>
+          <p class="panel-kicker">Standings</p>
+          <h3>Live leaderboard</h3>
+        </div>
+        <span class="course-status-pill">${state.room.finishedPlayers}/${state.room.players.length} finished</span>
+      </div>
+      <div class="standings-list">
+        ${state.room.players.map(playerStandingMarkup).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function waitingPlayerMarkup(player) {
@@ -1071,6 +1209,8 @@ function renderProblemPanel() {
       </div>
     </div>
 
+    ${courseStatusCardMarkup()}
+
     <section class="problem-section">
       <div class="problem-meta">
         <span class="difficulty-pill difficulty-pill--${escapeHtml(question.difficulty)}">${formatDifficulty(question.difficulty)}</span>
@@ -1123,11 +1263,12 @@ function renderProblemPanel() {
 
 function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
+  const spectatorMode = state.me.ball.sunk || state.room.status === "finished";
   elements.editorThemeSelect.value = theme.id;
-  elements.resetCodeButton.disabled = state.busy || !state.editorReady;
-  elements.runSampleTestsButton.disabled = state.busy || !state.editorReady;
-  elements.runTestsButton.disabled = state.busy || !state.editorReady;
-  elements.nextQuestionButton.hidden = !state.me.awaitingNextQuestion;
+  elements.resetCodeButton.disabled = spectatorMode || state.busy || !state.editorReady;
+  elements.runSampleTestsButton.disabled = spectatorMode || state.busy || !state.editorReady;
+  elements.runTestsButton.disabled = spectatorMode || state.busy || !state.editorReady;
+  elements.nextQuestionButton.hidden = spectatorMode || !state.me.awaitingNextQuestion;
   elements.nextQuestionButton.disabled = state.busy;
   elements.problemToGolfButton.disabled = state.busy;
   applyChallengeLayout();
@@ -1139,9 +1280,9 @@ function renderEditor() {
       await codeEditor.setTheme(theme.id);
       await codeEditor.setValue(state.codeDraft);
       state.editorReady = true;
-      elements.resetCodeButton.disabled = state.busy;
-      elements.runSampleTestsButton.disabled = state.busy;
-      elements.runTestsButton.disabled = state.busy;
+      elements.resetCodeButton.disabled = spectatorMode || state.busy;
+      elements.runSampleTestsButton.disabled = spectatorMode || state.busy;
+      elements.runTestsButton.disabled = spectatorMode || state.busy;
       applyEditorLayout();
       codeEditor.layout();
     })
@@ -1161,7 +1302,9 @@ function renderEditor() {
 function renderGolfControls() {
   const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
   const powerPercent = Math.round(state.shot.power * 100);
-  const winnerMessage = getWinnerMessage();
+  const spectatorMode = state.me.ball.sunk || state.room.status === "finished";
+  const statusCard = courseStatusCardMarkup();
+  const standingsCard = standingsPanelMarkup();
 
   elements.golfControlsPanel.innerHTML = `
     <p class="panel-kicker">Shot controls</p>
@@ -1171,24 +1314,36 @@ function renderGolfControls() {
       <span>${state.me.strokes} stroke${state.me.strokes === 1 ? "" : "s"}</span>
     </div>
 
+    ${statusCard}
+
     ${
-      winnerMessage
-        ? `<div class="evaluation neutral"><strong>${escapeHtml(winnerMessage)}</strong></div>`
-        : ""
+      spectatorMode
+        ? `
+          <section class="spectator-card">
+            <p class="panel-kicker">Spectator Mode</p>
+            <h3>${state.room.status === "finished" ? "Final hole results" : "Watch the rest of the hole"}</h3>
+            <p>${state.room.status === "finished"
+              ? "Swing controls are disabled because every player has finished."
+              : "Your ball is off the course now. Stay on the golf view to watch the remaining players navigate the hole."}</p>
+          </section>
+        `
+        : `
+          <div class="shot-controls">
+            <label>
+              Angle
+              <span id="angle-value" class="value-label">${angleDegrees}&deg;</span>
+              <input id="angle-input" type="range" min="0" max="359" value="${angleDegrees}">
+            </label>
+            <label>
+              Power
+              <span id="power-value" class="value-label">${powerPercent}%</span>
+              <input id="power-input" type="range" min="5" max="100" value="${powerPercent}">
+            </label>
+          </div>
+        `
     }
 
-    <div class="shot-controls">
-      <label>
-        Angle
-        <span id="angle-value" class="value-label">${angleDegrees}&deg;</span>
-        <input id="angle-input" type="range" min="0" max="359" value="${angleDegrees}">
-      </label>
-      <label>
-        Power
-        <span id="power-value" class="value-label">${powerPercent}%</span>
-        <input id="power-input" type="range" min="5" max="100" value="${powerPercent}">
-      </label>
-    </div>
+    ${standingsCard}
 
     <button id="swing-btn" type="button" class="primary">Take swing</button>
     <button id="golf-to-problem-btn" type="button" class="course-switch-button">Back to problem</button>
@@ -1198,24 +1353,26 @@ function renderGolfControls() {
   const powerInput = document.getElementById("power-input");
   const swingButton = document.getElementById("swing-btn");
 
-  angleInput.addEventListener("input", () => {
+  angleInput?.addEventListener("input", () => {
     state.shot.angle = (Number(angleInput.value) * Math.PI) / 180;
     syncShotControlLabels();
     drawCourse();
   });
 
-  powerInput.addEventListener("input", () => {
+  powerInput?.addEventListener("input", () => {
     state.shot.power = Number(powerInput.value) / 100;
     syncShotControlLabels();
     drawCourse();
   });
 
   swingButton.disabled =
+    spectatorMode ||
     !canTakeSwing() ||
     state.room.status === "finished" ||
     state.me.ball.sunk ||
     state.busy ||
     state.swingAnimating;
+  swingButton.hidden = spectatorMode;
   swingButton.addEventListener("click", onTakeSwing);
   document.getElementById("golf-to-problem-btn")?.addEventListener("click", () => setGameScreen("challenge"));
   syncShotControlLabels();
@@ -1240,9 +1397,8 @@ function drawCourse() {
 }
 
 function renderGame() {
-  const winnerMessage = getWinnerMessage();
-  elements.gameBanner.hidden = !winnerMessage;
-  elements.gameBanner.textContent = winnerMessage;
+  elements.gameBanner.hidden = true;
+  elements.gameBanner.textContent = "";
 
   const showingGolf = state.gameScreen === "golf";
   elements.challengeScreen.hidden = showingGolf;
@@ -1272,7 +1428,7 @@ function renderViews() {
   elements.gameShell.hidden = stage === "home" || stage === "waiting";
   elements.challengeScreen.hidden = stage !== "challenge";
   elements.golfScreen.hidden = stage !== "golf";
-  elements.gameBanner.hidden = stage === "home" || stage === "waiting";
+  elements.gameBanner.hidden = true;
   renderChatDock();
 
   if (stage === "home") {
@@ -1357,7 +1513,7 @@ async function onStartGame() {
 }
 
 async function onSubmitSolution(scope = "all") {
-  if (!state.session || state.busy || !state.editorReady) {
+  if (!state.session || state.busy || !state.editorReady || state.me?.ball.sunk || state.room?.status === "finished") {
     return;
   }
 
@@ -1394,7 +1550,7 @@ async function onSubmitSolution(scope = "all") {
 }
 
 async function onAdvanceQuestion() {
-  if (!state.session || state.busy || !state.me?.awaitingNextQuestion) {
+  if (!state.session || state.busy || !state.me?.awaitingNextQuestion || state.me?.ball.sunk || state.room?.status === "finished") {
     return;
   }
 

@@ -115,6 +115,8 @@ function createPlayer(room, name) {
     currentQuestionAssignment: 0,
     awaitingNextQuestion: false,
     ball: createSpawnBall(course),
+    finishPlace: null,
+    finishedAt: null,
     devModeEnabled,
     activeConnections: 0,
     disconnectTimer: null,
@@ -134,6 +136,31 @@ function ensureRoomStarted(room) {
   if (room.status === "finished") {
     throw createAppError("Round is already finished.", 409);
   }
+}
+
+function ensurePlayerCanStillPlay(player) {
+  if (player.ball.sunk) {
+    throw createAppError("This player has already finished the hole.", 409);
+  }
+}
+
+function syncRoomCompletionState(room) {
+  room.finishOrder = room.finishOrder.filter((playerId) => room.players.has(playerId));
+  room.winnerId = room.finishOrder[0] ?? null;
+
+  if (room.status === "waiting" || room.status === "ended") {
+    return;
+  }
+
+  const everyRemainingPlayerFinished = room.playerOrder.length > 0 && room.finishOrder.length === room.playerOrder.length;
+  if (everyRemainingPlayerFinished) {
+    room.status = "finished";
+    room.completedAt ??= Date.now();
+    return;
+  }
+
+  room.status = "active";
+  room.completedAt = null;
 }
 
 function getRoomByCode(roomCode) {
@@ -197,6 +224,8 @@ function serializePlayer(room, player) {
     swingCredits: getDisplayedSwingCredits(player),
     solvedCount: player.solvedQuestionIds.length,
     ball: player.ball,
+    finishPlace: player.finishPlace,
+    finishedAt: player.finishedAt,
     distanceToHole: getDistanceToHole(course, player.ball),
     progressPercent: getProgressPercent(course, player.ball)
   };
@@ -207,6 +236,10 @@ function getSortedPlayers(room) {
     .map((playerId) => room.players.get(playerId))
     .filter(Boolean)
     .sort((left, right) => {
+      if (left.finishPlace && right.finishPlace) {
+        return left.finishPlace - right.finishPlace;
+      }
+
       if (left.ball.sunk && !right.ball.sunk) {
         return -1;
       }
@@ -241,11 +274,13 @@ function serializeRoomForPlayer(room, playerId) {
       difficulty: room.difficulty,
       questionSource: room.questionSource,
       createdAt: room.createdAt,
+      completedAt: room.completedAt,
       questionLanguage: "Python 3",
       endVotes: {
         count: room.endVotePlayerIds.size,
         total: room.playerOrder.length
       },
+      finishedPlayers: room.finishOrder.length,
       chatMessages: room.chatMessages,
       course,
       players
@@ -258,6 +293,8 @@ function serializeRoomForPlayer(room, playerId) {
       swingCredits: getDisplayedSwingCredits(player),
       solvedCount: player.solvedQuestionIds.length,
       ball: player.ball,
+      finishPlace: player.finishPlace,
+      finishedAt: player.finishedAt,
       isHost: player.id === room.hostId,
       hasEndVote: room.endVotePlayerIds.has(player.id),
       awaitingNextQuestion: player.awaitingNextQuestion,
@@ -341,6 +378,7 @@ function finalizeDisconnectedPlayer(room, playerId) {
   closePlayerSubscriptions(room.code, player.id);
   room.players.delete(player.id);
   room.playerOrder = room.playerOrder.filter((id) => id !== player.id);
+  room.finishOrder = room.finishOrder.filter((id) => id !== player.id);
   room.endVotePlayerIds.delete(player.id);
 
   if (player.id === room.hostId || room.playerOrder.length === 0) {
@@ -348,6 +386,7 @@ function finalizeDisconnectedPlayer(room, playerId) {
     return;
   }
 
+  syncRoomCompletionState(room);
   broadcastRoomState(room);
 }
 
@@ -415,9 +454,11 @@ export function createRoom({ name, difficulty, courseId, questionSource }) {
     winnerId: null,
     hostId: null,
     endVotePlayerIds: new Set(),
+    finishOrder: [],
     chatMessages: [],
     players: new Map(),
-    playerOrder: []
+    playerOrder: [],
+    completedAt: null
   };
 
   const host = createPlayer(room, name);
@@ -595,6 +636,7 @@ export function submitAnswer({ roomCode, playerId, sessionId, submission, scope 
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
   ensureRoomStarted(room);
+  ensurePlayerCanStillPlay(player);
   const question = getQuestionById(player.currentQuestionId);
 
   const evaluation = evaluateSubmission(question, String(submission ?? ""), scope);
@@ -624,6 +666,7 @@ export function advanceQuestion({ roomCode, playerId, sessionId }) {
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
   ensureRoomStarted(room);
+  ensurePlayerCanStillPlay(player);
 
   if (!player.awaitingNextQuestion) {
     throw createAppError("Solve the current question before advancing.", 409);
@@ -642,10 +685,7 @@ export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
   const player = getAuthorizedPlayer(room, playerId, sessionId);
   const course = getCourseById(room.courseId);
   ensureRoomStarted(room);
-
-  if (player.ball.sunk) {
-    throw createAppError("This player has already finished the hole.", 409);
-  }
+  ensurePlayerCanStillPlay(player);
 
   if (!player.devModeEnabled && player.swingCredits < 1) {
     throw createAppError("Solve a question before taking a swing.", 409);
@@ -665,10 +705,14 @@ export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
   player.strokes += 1;
 
   if (player.ball.sunk) {
-    room.status = "finished";
-    room.winnerId = player.id;
+    if (!player.finishPlace) {
+      room.finishOrder.push(player.id);
+      player.finishPlace = room.finishOrder.length;
+      player.finishedAt = Date.now();
+    }
   }
 
+  syncRoomCompletionState(room);
   broadcastRoomState(room);
 
   return {

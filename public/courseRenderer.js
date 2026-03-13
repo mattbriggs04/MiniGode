@@ -220,8 +220,13 @@ export class CourseRenderer {
     const animatedPoint = this.animation ? interpolatePoint(this.animation.path, animationProgress) : null;
 
     scene.players.forEach((player) => {
+      const showingAnimatedBall = player.id === scene.meId && Boolean(animatedPoint);
+      if (player.ball.sunk && !showingAnimatedBall) {
+        return;
+      }
+
       const ball =
-        player.id === scene.meId && animatedPoint
+        showingAnimatedBall
           ? { ...player.ball, ...animatedPoint }
           : player.ball;
 
@@ -237,12 +242,6 @@ export class CourseRenderer {
       context.fillStyle = "rgba(255, 255, 255, 0.92)";
       context.font = "bold 14px 'IBM Plex Sans', 'Avenir Next', sans-serif";
       context.fillText(player.name.slice(0, 10), ball.x + 15, ball.y - 14);
-
-      if (player.ball.sunk) {
-        context.fillStyle = "rgba(255, 255, 255, 0.8)";
-        context.font = "600 13px 'IBM Plex Sans', 'Avenir Next', sans-serif";
-        context.fillText("Finished", ball.x + 15, ball.y + 6);
-      }
     });
   }
 

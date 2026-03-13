@@ -681,6 +681,18 @@ body.theme-dark .difficulty-pill--hard {
   border-color: rgba(255, 156, 136, 0.24);
 }
 
+body.theme-dark .course-status-card,
+body.theme-dark .spectator-card,
+body.theme-dark .standings-panel,
+body.theme-dark .standing-row {
+  border-color: rgba(236, 244, 239, 0.1);
+}
+
+body.theme-dark .course-status-pill,
+body.theme-dark .standing-rank {
+  background: rgba(236, 244, 239, 0.08);
+}
+
 .example-list {
   display: grid;
   gap: 10px;
@@ -752,6 +764,114 @@ body.theme-dark .difficulty-pill--hard {
 .evaluation.fail {
   background: rgba(255, 107, 74, 0.14);
   color: #872f21;
+}
+
+.problem-header + .course-status-card {
+  margin-top: 18px;
+}
+
+.course-status-card,
+.spectator-card,
+.standings-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(19, 39, 30, 0.12);
+  background: rgba(19, 39, 30, 0.06);
+}
+
+.course-status-card__header,
+.standings-panel__header,
+.standing-row,
+.standing-row__identity {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.course-status-card h3,
+.spectator-card h3,
+.standings-panel h3 {
+  margin: 0;
+}
+
+.course-status-card p,
+.spectator-card p,
+.standing-row p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.course-status-card--clubhouse {
+  background: linear-gradient(135deg, rgba(255, 107, 74, 0.12), rgba(255, 214, 102, 0.12));
+  border-color: rgba(255, 107, 74, 0.2);
+}
+
+.course-status-card--race {
+  background: linear-gradient(135deg, rgba(17, 138, 178, 0.12), rgba(19, 39, 30, 0.08));
+  border-color: rgba(17, 138, 178, 0.18);
+}
+
+.course-status-card--complete {
+  background: linear-gradient(135deg, rgba(47, 143, 98, 0.14), rgba(255, 214, 102, 0.12));
+  border-color: rgba(47, 143, 98, 0.2);
+}
+
+.course-status-pill,
+.standing-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(19, 39, 30, 0.1);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.spectator-card {
+  background: rgba(19, 39, 30, 0.05);
+}
+
+.standings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.standing-row {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(19, 39, 30, 0.05);
+  border: 1px solid rgba(19, 39, 30, 0.08);
+  align-items: center;
+}
+
+.standing-row.is-me {
+  border-color: rgba(255, 107, 74, 0.26);
+}
+
+.standing-row.is-finished {
+  background: rgba(47, 143, 98, 0.08);
+}
+
+.standing-row__identity {
+  align-items: center;
+}
+
+.standing-row__identity strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.standing-row__status {
+  color: var(--text);
+  font-weight: 700;
+  text-align: right;
 }
 
 .test-list {

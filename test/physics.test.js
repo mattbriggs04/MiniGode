@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getCourseById } from "../src/data/courses.js";
+import { getCourseById, getCourseSummaries } from "../src/data/courses.js";
 import { createSpawnBall, getProgressPercent, simulateSwing } from "../src/lib/physics.js";
+
+test("course catalog exposes all available multiplayer test courses", () => {
+  assert.deepEqual(
+    getCourseSummaries().map((course) => course.id),
+    ["sunset-switchbacks", "meadow-run", "copper-canyon"]
+  );
+});
 
 test("spawn ball starts at the tee", () => {
   const course = getCourseById("sunset-switchbacks");

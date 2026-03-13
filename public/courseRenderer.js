@@ -110,13 +110,10 @@ export class CourseRenderer {
   drawCourse(course) {
     const context = this.context;
     const gradient = context.createLinearGradient(0, 0, course.width, course.height);
-    gradient.addColorStop(0, "#183a2d");
-    gradient.addColorStop(1, "#0f271d");
+    gradient.addColorStop(0, "#5b9a62");
+    gradient.addColorStop(1, "#437a4b");
     context.fillStyle = gradient;
     context.fillRect(0, 0, course.width, course.height);
-
-    context.fillStyle = "#4f8a58";
-    context.fillRect(18, 18, course.width - 36, course.height - 36);
 
     context.fillStyle = "rgba(255, 255, 255, 0.08)";
     course.accents.forEach((accent) => {
@@ -141,7 +138,7 @@ export class CourseRenderer {
 
     context.strokeStyle = "rgba(255, 255, 255, 0.2)";
     context.lineWidth = 4;
-    context.strokeRect(18, 18, course.width - 36, course.height - 36);
+    context.strokeRect(2, 2, course.width - 4, course.height - 4);
 
     context.fillStyle = "#111111";
     context.beginPath();

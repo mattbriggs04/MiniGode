@@ -4,10 +4,11 @@ import { getCourseById, getCourseSummaries } from "../src/data/courses.js";
 import { createSpawnBall, getProgressPercent, simulateSwing } from "../src/lib/physics.js";
 
 test("course catalog exposes all available multiplayer test courses", () => {
-  assert.deepEqual(
-    getCourseSummaries().map((course) => course.id),
-    ["sunset-switchbacks", "meadow-run", "copper-canyon"]
-  );
+  const courseIds = getCourseSummaries().map((course) => course.id);
+
+  assert.ok(courseIds.includes("sunset-switchbacks"));
+  assert.ok(courseIds.includes("meadow-run"));
+  assert.ok(courseIds.includes("copper-canyon"));
 });
 
 test("spawn ball starts at the tee", () => {

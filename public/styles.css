@@ -49,6 +49,10 @@
   --chat-notice-text: #8c3122;
   --chat-close-bg: rgba(19, 39, 30, 0.08);
   --chat-close-text: #1b241f;
+  --timer-pill-bg: rgba(13, 31, 23, 0.88);
+  --timer-pill-border: rgba(255, 214, 102, 0.24);
+  --timer-pill-text: #f6f0e6;
+  --timer-pill-kicker: rgba(246, 240, 230, 0.68);
 }
 
 * {
@@ -145,6 +149,10 @@ body.theme-dark {
   --chat-notice-text: #ffd6cf;
   --chat-close-bg: rgba(255, 255, 255, 0.08);
   --chat-close-text: #ecf4ef;
+  --timer-pill-bg: rgba(7, 12, 10, 0.9);
+  --timer-pill-border: rgba(96, 255, 178, 0.22);
+  --timer-pill-text: #ecf4ef;
+  --timer-pill-kicker: rgba(236, 244, 239, 0.68);
 }
 
 body.gameplay-mode {
@@ -248,6 +256,10 @@ textarea:focus-visible {
 .app-shell.is-gameplay .results-screen {
   min-height: 0;
   height: 100%;
+}
+
+.app-shell.is-gameplay .golf-screen {
+  overflow: hidden;
 }
 
 .hero {
@@ -499,6 +511,48 @@ label {
   overflow: hidden;
 }
 
+.game-shell--with-timer {
+  padding-top: 78px;
+}
+
+.game-timer-hud {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 20px);
+  right: calc(env(safe-area-inset-right, 0px) + 24px);
+  z-index: 18;
+  pointer-events: none;
+}
+
+.game-timer-pill {
+  min-width: 170px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px 12px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--timer-pill-border);
+  background: var(--timer-pill-bg);
+  color: var(--timer-pill-text);
+  box-shadow: 0 18px 44px rgba(5, 11, 8, 0.24);
+  backdrop-filter: blur(12px);
+}
+
+.game-timer-pill__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--timer-pill-kicker);
+}
+
+.game-timer-pill strong {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
 .results-screen {
   min-height: 0;
   height: 100%;
@@ -589,17 +643,26 @@ label {
 .app-shell.is-gameplay .golf-layout {
   grid-template-columns: minmax(0, 1fr) 360px;
   gap: 0;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
+  align-items: stretch;
 }
 
 .app-shell.is-gameplay .golf-stage-panel {
-  padding: 28px 30px 120px;
+  height: 100%;
+  min-height: 0;
+  padding: 28px 30px 32px;
   border-right: 1px solid var(--gameplay-border);
+  overflow: hidden;
 }
 
 .app-shell.is-gameplay .golf-controls-panel {
+  height: 100%;
+  min-height: 0;
   padding: 28px 24px 120px;
   background: var(--gameplay-side-bg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .problem-header {
@@ -784,7 +847,6 @@ body.theme-dark .standing-rank {
 }
 
 .course-status-card,
-.round-timer-card,
 .spectator-card,
 .standings-panel {
   display: grid;
@@ -796,7 +858,6 @@ body.theme-dark .standing-rank {
 }
 
 .course-status-card__header,
-.round-timer-card__header,
 .standings-panel__header,
 .standing-row,
 .standing-row__identity {
@@ -808,24 +869,17 @@ body.theme-dark .standing-rank {
 }
 
 .course-status-card h3,
-.round-timer-card h3,
 .spectator-card h3,
 .standings-panel h3 {
   margin: 0;
 }
 
 .course-status-card p,
-.round-timer-card p,
 .spectator-card p,
 .standing-row p {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
-}
-
-.round-timer-card {
-  background: linear-gradient(135deg, rgba(255, 214, 102, 0.12), rgba(255, 107, 74, 0.1));
-  border-color: rgba(255, 166, 77, 0.2);
 }
 
 .course-status-card--clubhouse {
@@ -1477,15 +1531,29 @@ body.is-resizing-panels * {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) 360px;
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
+  height: 100%;
+}
+
+.golf-stage-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .golf-controls-panel {
   display: grid;
   gap: 16px;
+  min-height: 0;
+  align-content: start;
 }
 
 .golf-canvas-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
   width: 100%;
   padding: 14px;
   overflow: hidden;
@@ -1667,6 +1735,17 @@ body.theme-dark .shot-controls input[type="range"] {
     overflow: visible;
   }
 
+  .app-shell.is-gameplay .golf-layout,
+  .app-shell.is-gameplay .golf-stage-panel,
+  .app-shell.is-gameplay .golf-controls-panel {
+    height: auto;
+  }
+
+  .app-shell.is-gameplay .golf-stage-panel,
+  .app-shell.is-gameplay .golf-controls-panel {
+    overflow: visible;
+  }
+
   .editor-panel {
     display: flex;
     flex-direction: column;
@@ -1687,6 +1766,15 @@ body.theme-dark .shot-controls input[type="range"] {
   .chat-dock {
     right: 16px;
     bottom: 16px;
+  }
+
+  .game-shell--with-timer {
+    padding-top: 72px;
+  }
+
+  .game-timer-hud {
+    top: calc(env(safe-area-inset-top, 0px) + 16px);
+    right: calc(env(safe-area-inset-right, 0px) + 16px);
   }
 
   .results-screen {
@@ -1736,6 +1824,30 @@ body.theme-dark .shot-controls input[type="range"] {
 
   .chat-panel {
     width: min(calc(100vw - 20px), 360px);
+  }
+
+  .game-shell--with-timer {
+    padding-top: 68px;
+  }
+
+  .game-timer-hud {
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: calc(env(safe-area-inset-right, 0px) + 12px);
+  }
+
+  .game-timer-pill {
+    min-width: 154px;
+    gap: 10px;
+    padding: 10px 12px 10px 14px;
+  }
+
+  .game-timer-pill__label {
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+  }
+
+  .game-timer-pill strong {
+    font-size: 0.96rem;
   }
 
   .results-actions {

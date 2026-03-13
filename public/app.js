@@ -13,6 +13,7 @@ import {
 } from "./api.js";
 import { CourseRenderer } from "./courseRenderer.js";
 import { createEditorController, EDITOR_THEMES, getEditorTheme } from "./editorController.js";
+import { createDragAim, getShotFromDrag } from "./shotAim.js";
 
 const SESSION_KEY = "minigode-session";
 const EDITOR_THEME_KEY = "minigode-editor-theme";
@@ -356,6 +357,8 @@ function createShell() {
             </div>
           </section>
 
+          <div id="game-timer-hud" class="game-timer-hud" hidden></div>
+
           <section id="game-shell" class="game-shell" hidden>
             <div id="game-banner" class="winner-banner" hidden></div>
 
@@ -481,6 +484,7 @@ function createShell() {
     waitingStatus: document.getElementById("waiting-status"),
     startGameButton: document.getElementById("start-game-btn"),
     copyRoomButton: document.getElementById("copy-room-btn"),
+    gameTimerHud: document.getElementById("game-timer-hud"),
     gameShell: document.getElementById("game-shell"),
     gameBanner: document.getElementById("game-banner"),
     challengeScreen: document.getElementById("challenge-screen"),
@@ -878,6 +882,43 @@ function formatPlace(value) {
   return `${value}th`;
 }
 
+function getLeadingPlayers() {
+  if (!state.room?.players?.length) {
+    return [];
+  }
+
+  if (Array.isArray(state.room.leaderIds) && state.room.leaderIds.length) {
+    const leaderIds = new Set(state.room.leaderIds);
+    return state.room.players.filter((player) => leaderIds.has(player.id));
+  }
+
+  return state.room.players[0] ? [state.room.players[0]] : [];
+}
+
+function getLeaderboardRank(player, fallbackIndex) {
+  return Number.isInteger(player?.leaderboardRank) ? player.leaderboardRank : fallbackIndex + 1;
+}
+
+function isTiedForLead(player) {
+  return Boolean(state.room?.leaderIds?.length > 1 && player?.leaderboardRank === 1);
+}
+
+function formatLeaderNames(players) {
+  if (!players.length) {
+    return "Multiple players";
+  }
+
+  if (players.length === 1) {
+    return players[0].name;
+  }
+
+  if (players.length === 2) {
+    return `${players[0].name} and ${players[1].name}`;
+  }
+
+  return `${players[0].name}, ${players[1].name}, and ${players.length - 2} others`;
+}
+
 function getEndVoteButtonLabel() {
   if (!state.room?.endVotes) {
     return state.me?.hasEndVote ? "Cancel end vote" : "End game";
@@ -887,21 +928,24 @@ function getEndVoteButtonLabel() {
   return state.me?.hasEndVote ? `Cancel end vote (${voteCount})` : `End game (${voteCount})`;
 }
 
-function getRoundTimerMarkup() {
-  if (!state.room?.timer?.enabled || state.room.status === "waiting" || isRoomOver()) {
-    return "";
+function renderGameTimerHud() {
+  const visible = Boolean(
+    state.room?.timer?.enabled &&
+      state.room.status === "active" &&
+      (getCurrentStage() === "challenge" || getCurrentStage() === "golf")
+  );
+
+  elements.gameShell.classList.toggle("game-shell--with-timer", visible);
+  elements.gameTimerHud.hidden = !visible;
+  if (!visible) {
+    elements.gameTimerHud.innerHTML = "";
+    return;
   }
 
-  return `
-    <section class="round-timer-card">
-      <div class="round-timer-card__header">
-        <div>
-          <p class="panel-kicker">Round timer</p>
-          <h3>Clock is running</h3>
-        </div>
-        <span class="course-status-pill" data-room-countdown>${escapeHtml(formatCountdownClock(getLiveRoomTimerMs() ?? 0))}</span>
-      </div>
-      <p>When the timer hits zero, the room moves to the final leaderboard automatically.</p>
+  elements.gameTimerHud.innerHTML = `
+    <section class="game-timer-pill" aria-live="polite">
+      <span class="game-timer-pill__label">Time left</span>
+      <strong data-room-countdown>${escapeHtml(formatCountdownClock(getLiveRoomTimerMs() ?? 0))}</strong>
     </section>
   `;
 }
@@ -985,7 +1029,8 @@ function getCourseStatusCard() {
     return null;
   }
 
-  const winner = state.room.players.find((player) => player.id === state.room.winnerId);
+  const leaders = getLeadingPlayers();
+  const winner = leaders.length === 1 ? leaders[0] : null;
   const remainingPlayers = getRemainingPlayersCount();
   const opponentsStillPlaying = state.me.ball.sunk ? remainingPlayers : Math.max(remainingPlayers - 1, 0);
 
@@ -1059,9 +1104,11 @@ function courseStatusCardMarkup() {
 }
 
 function playerStandingMarkup(player, index) {
-  const statusLabel = player.finishPlace
-    ? `Finished ${formatPlace(player.finishPlace)}`
-    : `${player.distanceToHole} from the hole`;
+  const statusLabel = isTiedForLead(player)
+    ? "Tied for 1st"
+    : player.finishPlace
+      ? `Finished ${formatPlace(player.finishPlace)}`
+      : `${player.distanceToHole} from the hole`;
   const secondaryLabel = player.finishPlace
     ? `${player.strokes} stroke${player.strokes === 1 ? "" : "s"}`
     : `${player.strokes} stroke${player.strokes === 1 ? "" : "s"} • ${player.progressPercent}% progress`;
@@ -1069,7 +1116,7 @@ function playerStandingMarkup(player, index) {
   return `
     <article class="standing-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
       <div class="standing-row__identity">
-        <span class="standing-rank">${index + 1}</span>
+        <span class="standing-rank">${getLeaderboardRank(player, index)}</span>
         <span class="player-color" style="background:${player.color}"></span>
         <div>
           <strong>${escapeHtml(player.name)}</strong>
@@ -1103,8 +1150,6 @@ function standingsPanelMarkup() {
 }
 
 function getResultsSummary() {
-  const leader = state.room?.players?.[0];
-
   if (!state.room || !state.me) {
     return {
       eyebrow: "Results",
@@ -1113,7 +1158,22 @@ function getResultsSummary() {
     };
   }
 
+  const leaders = getLeadingPlayers();
+  const leader = leaders.length === 1 ? leaders[0] : null;
+  const leaderNames = formatLeaderNames(leaders);
+
   if (state.room.status === "timed_out") {
+    if (!leader) {
+      return {
+        eyebrow: "Time Expired",
+        title: "Time is up. No winner was decided.",
+        body:
+          leaders.length === state.room.players.length
+            ? "Everyone was tied on the final leaderboard."
+            : `${leaderNames} are tied at the top of the final leaderboard.`
+      };
+    }
+
     return {
       eyebrow: "Time Expired",
       title:
@@ -1125,10 +1185,29 @@ function getResultsSummary() {
   }
 
   if (state.room.status === "ended") {
+    if (!leader) {
+      return {
+        eyebrow: "Game Ended",
+        title: "The game ended without a winner.",
+        body:
+          leaders.length === state.room.players.length
+            ? "Everyone was tied when the game ended."
+            : `${leaderNames} were tied at the top when the game ended.`
+      };
+    }
+
     return {
       eyebrow: "Game Ended",
       title: leader?.id === state.me.id ? "The game ended with you on top." : `${leader?.name ?? "A player"} led when the game ended.`,
       body: "The room was ended early, so the standings below capture the current state of the round."
+    };
+  }
+
+  if (!leader) {
+    return {
+      eyebrow: "Hole Complete",
+      title: "The hole ended without a winner.",
+      body: "Final standings are locked in below."
     };
   }
 
@@ -1140,28 +1219,31 @@ function getResultsSummary() {
 }
 
 function resultsRowMarkup(player, index) {
-  const completionLabel = player.ball.sunk
-    ? player.finishPlace
-      ? `Finished ${formatPlace(player.finishPlace)}`
-      : "Hole complete"
-    : state.room.status === "timed_out"
-      ? "Time expired"
-      : "Hole incomplete";
+  const completionLabel = isTiedForLead(player)
+    ? "Tied for 1st"
+    : player.ball.sunk
+      ? player.finishPlace
+        ? `Finished ${formatPlace(player.finishPlace)}`
+        : "Hole complete"
+      : state.room.status === "timed_out"
+        ? "Time expired"
+        : "Hole incomplete";
 
   const distanceLabel = player.ball.sunk ? "In the cup" : `${player.distanceToHole} left`;
+  const resultsPill = isTiedForLead(player) ? "Tied lead" : player.ball.sunk ? "Completed" : "In progress";
 
   return `
     <article class="results-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
       <div class="results-row__header">
         <div class="results-row__identity">
-          <span class="standing-rank">${index + 1}</span>
+          <span class="standing-rank">${getLeaderboardRank(player, index)}</span>
           <span class="player-color" style="background:${player.color}"></span>
           <div>
             <strong>${escapeHtml(player.name)}</strong>
             <p>${escapeHtml(completionLabel)}</p>
           </div>
         </div>
-        <span class="course-status-pill">${escapeHtml(player.ball.sunk ? "Completed" : "In progress")}</span>
+        <span class="course-status-pill">${escapeHtml(resultsPill)}</span>
       </div>
       <div class="results-row__stats">
         <div class="results-stat">
@@ -1444,7 +1526,6 @@ function renderProblemPanel() {
     </div>
 
     ${courseStatusCardMarkup()}
-    ${getRoundTimerMarkup()}
 
     <section class="problem-section">
       <div class="problem-meta">
@@ -1550,7 +1631,6 @@ function renderGolfControls() {
     </div>
 
     ${statusCard}
-    ${getRoundTimerMarkup()}
 
     ${
       spectatorMode
@@ -1667,6 +1747,7 @@ function renderViews() {
   elements.resultsScreen.hidden = stage !== "results";
   elements.gameBanner.hidden = true;
   renderChatDock();
+  renderGameTimerHud();
 
   if (stage === "home") {
     return;
@@ -1909,16 +1990,19 @@ function canAimOnCourse() {
 }
 
 function updateShotFromDrag(startPoint, currentPoint) {
-  const dx = currentPoint.x - startPoint.x;
-  const dy = currentPoint.y - startPoint.y;
-  const distance = Math.hypot(dx, dy);
+  const shot = getShotFromDrag(startPoint, currentPoint, {
+    minDistance: MIN_DRAG_DISTANCE,
+    powerDistance: DRAG_POWER_DISTANCE,
+    minPower: 0.05,
+    maxPower: 1
+  });
 
-  if (distance < MIN_DRAG_DISTANCE) {
+  if (!shot) {
     return false;
   }
 
-  state.shot.angle = Math.atan2(startPoint.y - currentPoint.y, startPoint.x - currentPoint.x);
-  state.shot.power = clamp(distance / DRAG_POWER_DISTANCE, 0.05, 1);
+  state.shot.angle = shot.angle;
+  state.shot.power = shot.power;
   syncShotControlLabels();
   return true;
 }
@@ -1935,11 +2019,7 @@ function onCoursePointerDown(event) {
   }
 
   event.preventDefault();
-  state.dragAim = {
-    pointerId: event.pointerId,
-    start: worldPoint,
-    current: worldPoint
-  };
+  state.dragAim = createDragAim(state.me.ball, event.pointerId);
   elements.courseCanvas.setPointerCapture?.(event.pointerId);
   drawCourse();
 }

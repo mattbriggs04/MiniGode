@@ -201,7 +201,8 @@ function isFinalRoomStatus(status) {
 
 function syncRoomCompletionState(room) {
   room.finishOrder = room.finishOrder.filter((playerId) => room.players.has(playerId));
-  room.winnerId = room.finishOrder[0] ?? null;
+  const leaderIds = getLeaderIdsFromEntries(getLeaderboardEntries(room));
+  room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
 
   if (room.status === "waiting" || room.status === "ended" || room.status === "timed_out") {
     return;
@@ -365,59 +366,112 @@ function pickQuestionForPlayer(room, player) {
   return getQuestionById(questionId);
 }
 
-function serializePlayer(room, player) {
+function serializePlayer(room, player, metrics = null) {
   const course = getCourseById(room.courseId);
+  const solvedCount = player.solvedQuestionIds.length;
+  const distanceToHole = metrics?.distanceToHole ?? getDistanceToHole(course, player.ball);
+  const progressPercent = metrics?.progressPercent ?? getProgressPercent(course, player.ball);
   return {
     id: player.id,
     name: player.name,
     color: player.color,
     strokes: player.strokes,
     swingCredits: getDisplayedSwingCredits(player),
-    solvedCount: player.solvedQuestionIds.length,
+    solvedCount,
     ball: player.ball,
     finishPlace: player.finishPlace,
     finishedAt: player.finishedAt,
     holesCompleted: player.ball.sunk ? 1 : 0,
     holesTotal: 1,
-    distanceToHole: getDistanceToHole(course, player.ball),
-    progressPercent: getProgressPercent(course, player.ball)
+    distanceToHole,
+    progressPercent,
+    leaderboardRank: metrics?.leaderboardRank ?? null
   };
 }
 
-function getSortedPlayers(room) {
-  return room.playerOrder
+function getPlayerStandingMetrics(room, player) {
+  const course = getCourseById(room.courseId);
+  return {
+    finishPlace: player.finishPlace,
+    sunk: player.ball.sunk,
+    distanceToHole: getDistanceToHole(course, player.ball),
+    progressPercent: getProgressPercent(course, player.ball),
+    solvedCount: player.solvedQuestionIds.length,
+    strokes: player.strokes
+  };
+}
+
+function comparePlayerStandings(left, right) {
+  if (left.finishPlace && right.finishPlace) {
+    return left.finishPlace - right.finishPlace;
+  }
+
+  if (left.sunk && !right.sunk) {
+    return -1;
+  }
+  if (!left.sunk && right.sunk) {
+    return 1;
+  }
+
+  if (left.distanceToHole !== right.distanceToHole) {
+    return left.distanceToHole - right.distanceToHole;
+  }
+
+  if (left.solvedCount !== right.solvedCount) {
+    return right.solvedCount - left.solvedCount;
+  }
+
+  if (left.strokes !== right.strokes) {
+    return left.strokes - right.strokes;
+  }
+
+  return 0;
+}
+
+function getLeaderboardEntries(room) {
+  const entries = room.playerOrder
     .map((playerId) => room.players.get(playerId))
     .filter(Boolean)
+    .map((player) => ({
+      player,
+      metrics: getPlayerStandingMetrics(room, player)
+    }))
     .sort((left, right) => {
-      if (left.finishPlace && right.finishPlace) {
-        return left.finishPlace - right.finishPlace;
+      const comparison = comparePlayerStandings(left.metrics, right.metrics);
+      if (comparison !== 0) {
+        return comparison;
       }
 
-      if (left.ball.sunk && !right.ball.sunk) {
-        return -1;
-      }
-      if (!left.ball.sunk && right.ball.sunk) {
-        return 1;
+      if (left.player.joinedAt !== right.player.joinedAt) {
+        return left.player.joinedAt - right.player.joinedAt;
       }
 
-      const leftDistance = serializePlayer(room, left).distanceToHole;
-      const rightDistance = serializePlayer(room, right).distanceToHole;
-      if (leftDistance !== rightDistance) {
-        return leftDistance - rightDistance;
-      }
-
-      const leftSolvedCount = left.solvedQuestionIds.length;
-      const rightSolvedCount = right.solvedQuestionIds.length;
-      if (leftSolvedCount !== rightSolvedCount) {
-        return rightSolvedCount - leftSolvedCount;
-      }
-
-      if (left.strokes !== right.strokes) {
-        return left.strokes - right.strokes;
-      }
-
-      return left.joinedAt - right.joinedAt;
+      return left.player.id.localeCompare(right.player.id);
     });
+
+  let previousMetrics = null;
+  let leaderboardRank = 1;
+  entries.forEach((entry, index) => {
+    if (previousMetrics && comparePlayerStandings(entry.metrics, previousMetrics) !== 0) {
+      leaderboardRank = index + 1;
+    }
+
+    entry.metrics.leaderboardRank = leaderboardRank;
+    previousMetrics = entry.metrics;
+  });
+
+  return entries;
+}
+
+function getLeaderIdsFromEntries(entries) {
+  if (!entries.length) {
+    return [];
+  }
+
+  const topMetrics = entries[0].metrics;
+  return entries
+    .filter((entry) => comparePlayerStandings(entry.metrics, topMetrics) === 0)
+    .map((entry) => entry.player.id);
 }
 
 function serializeRoomTimer(room) {
@@ -435,7 +489,9 @@ function serializeRoomTimer(room) {
 function serializeRoomForPlayer(room, playerId) {
   const player = getPlayer(room, playerId);
   const course = getCourseById(room.courseId);
-  const players = getSortedPlayers(room).map((entry) => serializePlayer(room, entry));
+  const leaderboardEntries = getLeaderboardEntries(room);
+  const players = leaderboardEntries.map((entry) => serializePlayer(room, entry.player, entry.metrics));
+  const leaderIds = getLeaderIdsFromEntries(leaderboardEntries);
   const currentQuestion =
     room.status !== "active"
       ? null
@@ -446,6 +502,7 @@ function serializeRoomForPlayer(room, playerId) {
       code: room.code,
       status: room.status,
       winnerId: room.winnerId,
+      leaderIds,
       hostId: room.hostId,
       difficulty: room.difficulty,
       questionSource: room.questionSource,

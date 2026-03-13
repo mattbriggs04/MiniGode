@@ -72,8 +72,43 @@ const courseCatalog = [
 
 export const COURSE_CATALOG = courseCatalog;
 
+function cloneRectangle(rect) {
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+function cloneCourse(course) {
+  return {
+    id: course.id,
+    name: course.name,
+    description: course.description,
+    width: course.width,
+    height: course.height,
+    tee: {
+      x: course.tee.x,
+      y: course.tee.y
+    },
+    hole: {
+      x: course.hole.x,
+      y: course.hole.y,
+      radius: course.hole.radius
+    },
+    walls: course.walls.map(cloneRectangle),
+    sandTraps: course.sandTraps.map(cloneRectangle),
+    accents: course.accents.map(cloneRectangle)
+  };
+}
+
 export function getCourseById(courseId) {
   return courseCatalog.find((course) => course.id === courseId) ?? courseCatalog[0];
+}
+
+export function getCourseCatalog() {
+  return courseCatalog.map(cloneCourse);
 }
 
 export function getCourseSummaries() {

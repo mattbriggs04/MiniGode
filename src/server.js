@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getCourseCatalog } from "./data/courses.js";
 import {
   createAppError,
   advanceQuestion,
@@ -130,6 +131,11 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/bootstrap") {
       sendJson(response, 200, getBootstrapPayload());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/courses") {
+      sendJson(response, 200, { courses: getCourseCatalog() });
       return;
     }
 

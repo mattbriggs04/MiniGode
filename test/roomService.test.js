@@ -369,6 +369,49 @@ test("the game ends only after every player votes to end it", () => {
   assert.equal(secondVote.state.me.hasEndVote, true);
 });
 
+test("ended games with tied players do not assign a fake winner", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  toggleEndVote({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  const ended = toggleEndVote({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  assert.equal(ended.state.room.status, "ended");
+  assert.equal(ended.state.room.winnerId, null);
+  assert.deepEqual(
+    [...ended.state.room.leaderIds].sort(),
+    [created.playerId, joined.playerId].sort()
+  );
+  assert.deepEqual(
+    ended.state.room.players.map((player) => player.leaderboardRank),
+    [1, 1]
+  );
+});
+
 test("timed rooms expose timer metadata and transition to timed_out when the deadline passes", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 

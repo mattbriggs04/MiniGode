@@ -739,14 +739,16 @@ a.ghost-inline {
 .app-shell.is-gameplay .golf-layout {
   grid-template-columns: minmax(0, 1fr) 360px;
   gap: 0;
-  min-height: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
   height: 100%;
   align-items: stretch;
 }
 
 .app-shell.is-gameplay .golf-stage-panel {
   height: 100%;
-  min-height: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
   padding: 28px 30px 32px;
   border-right: 1px solid var(--gameplay-border);
   overflow: hidden;
@@ -754,7 +756,8 @@ a.ghost-inline {
 
 .app-shell.is-gameplay .golf-controls-panel {
   height: 100%;
-  min-height: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
   padding: 28px 24px 120px;
   background: var(--gameplay-side-bg);
   overflow-y: auto;
@@ -1843,6 +1846,7 @@ body.theme-dark .shot-controls input[type="range"] {
   .app-shell.is-gameplay .golf-layout,
   .app-shell.is-gameplay .golf-stage-panel,
   .app-shell.is-gameplay .golf-controls-panel {
+    min-height: auto;
     height: auto;
   }
 

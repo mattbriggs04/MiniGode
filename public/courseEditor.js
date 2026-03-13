@@ -11,6 +11,7 @@ const MAX_COURSE_WIDTH = 2400;
 const MAX_COURSE_HEIGHT = 1800;
 const COURSE_DIMENSION_STEP = 10;
 const GRID_SNAP_STEP = 5;
+const COPY_BUTTON_FEEDBACK_MS = 1000;
 const GRID_MAJOR_STEP = GRID_SNAP_STEP * 5;
 const DEFAULT_HOLE_RADIUS = 18;
 const MIN_HOLE_RADIUS = 10;
@@ -51,6 +52,7 @@ const state = {
 
 let elements;
 let renderer;
+const copyButtonTimers = new WeakMap();
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -868,10 +870,31 @@ function duplicateSelectedTarget() {
   selectTarget({ type: collectionName, index: nextIndex });
 }
 
-async function copyText(text, successMessage) {
+function flashButtonLabel(button, temporaryLabel, durationMs = COPY_BUTTON_FEEDBACK_MS) {
+  if (!button) {
+    return;
+  }
+
+  const defaultLabel = button.dataset.defaultLabel || button.textContent.trim();
+  button.dataset.defaultLabel = defaultLabel;
+
+  const activeTimer = copyButtonTimers.get(button);
+  if (activeTimer) {
+    clearTimeout(activeTimer);
+  }
+
+  button.textContent = temporaryLabel;
+  const resetTimer = window.setTimeout(() => {
+    button.textContent = button.dataset.defaultLabel || defaultLabel;
+    copyButtonTimers.delete(button);
+  }, durationMs);
+  copyButtonTimers.set(button, resetTimer);
+}
+
+async function copyText(button, text) {
   try {
     await navigator.clipboard.writeText(text);
-    setStatus(successMessage);
+    flashButtonLabel(button, "Copied!");
   } catch {
     setStatus("Copy failed. Your browser blocked clipboard access.");
   }
@@ -1347,10 +1370,10 @@ function bindEvents() {
   elements.objectList.addEventListener("click", onObjectListClick);
 
   elements.copyObjectButton.addEventListener("click", () => {
-    void copyText(formatCourseObject(state.course), "Copied course object.");
+    void copyText(elements.copyObjectButton, formatCourseObject(state.course));
   });
   elements.copyJsonButton.addEventListener("click", () => {
-    void copyText(JSON.stringify(state.course, null, 2), "Copied course JSON.");
+    void copyText(elements.copyJsonButton, JSON.stringify(state.course, null, 2));
   });
   elements.downloadJsonButton.addEventListener("click", downloadCurrentCourseJson);
   elements.importJsonButton.addEventListener("click", loadCourseFromImport);

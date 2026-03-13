@@ -135,8 +135,9 @@
   place-items: center;
   padding: 16px;
   border-radius: 24px;
-  background: color-mix(in srgb, var(--panel) 74%, rgba(8, 19, 14, 0.22));
-  border: 1px solid var(--outline);
+  background: var(--course-frame-bg);
+  border: 1px solid var(--course-frame-border);
+  box-shadow: var(--course-frame-shadow);
   overflow: hidden;
 }
 
@@ -332,7 +333,6 @@
   line-height: 1.55;
 }
 
-body.theme-dark .course-editor-canvas-shell,
 body.theme-dark .course-editor-tools,
 body.theme-dark .course-editor-help article,
 body.theme-dark .course-editor-object-button,

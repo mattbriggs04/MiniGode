@@ -53,6 +53,9 @@
   --timer-pill-border: rgba(255, 214, 102, 0.24);
   --timer-pill-text: #f6f0e6;
   --timer-pill-kicker: rgba(246, 240, 230, 0.68);
+  --course-frame-bg: linear-gradient(180deg, #294a3c, #1a3127);
+  --course-frame-border: rgba(19, 39, 30, 0.18);
+  --course-frame-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 18px 40px rgba(7, 15, 11, 0.18);
 }
 
 * {
@@ -153,6 +156,9 @@ body.theme-dark {
   --timer-pill-border: rgba(96, 255, 178, 0.22);
   --timer-pill-text: #ecf4ef;
   --timer-pill-kicker: rgba(236, 244, 239, 0.68);
+  --course-frame-bg: linear-gradient(180deg, rgba(19, 34, 28, 0.98), rgba(9, 18, 14, 0.98));
+  --course-frame-border: rgba(236, 244, 239, 0.14);
+  --course-frame-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 44px rgba(0, 0, 0, 0.36);
 }
 
 body.gameplay-mode {
@@ -1643,11 +1649,12 @@ body.is-resizing-panels * {
   display: grid;
   place-items: center;
   width: 100%;
-  padding: 14px;
+  padding: 16px;
   overflow: hidden;
   border-radius: 22px;
-  background: linear-gradient(180deg, rgba(19, 39, 30, 0.08), rgba(19, 39, 30, 0.14));
-  border: 1px solid rgba(19, 39, 30, 0.12);
+  background: var(--course-frame-bg);
+  border: 1px solid var(--course-frame-border);
+  box-shadow: var(--course-frame-shadow);
 }
 
 #course-canvas {

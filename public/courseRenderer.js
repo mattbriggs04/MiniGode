@@ -136,10 +136,6 @@ export class CourseRenderer {
       context.fill();
     });
 
-    context.strokeStyle = "rgba(255, 255, 255, 0.2)";
-    context.lineWidth = 4;
-    context.strokeRect(2, 2, course.width - 4, course.height - 4);
-
     context.fillStyle = "#111111";
     context.beginPath();
     context.arc(course.hole.x, course.hole.y, course.hole.radius, 0, Math.PI * 2);

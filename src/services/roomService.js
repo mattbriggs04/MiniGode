@@ -17,10 +17,14 @@ import { evaluateSubmission, sanitizeQuestion } from "../lib/questionEvaluator.j
 const MAX_PLAYERS_PER_ROOM = 6;
 const MAX_CHAT_MESSAGES = 80;
 const PLAYER_DISCONNECT_GRACE_MS = 8000;
+const ROOM_POST_GAME_RETENTION_MS = 30_000;
+const TIME_LIMIT_OPTIONS_MINUTES = [0, 5, 10, 15, 20, 30, 45, 60];
 const DEV_MODE_NAME = "dev$mode!";
 const DEV_MODE_SWING_CREDITS = 999;
 const roomStore = new Map();
 const roomSubscribers = new Map();
+const roomExpirationTimers = new Map();
+const roomDeadlineTimers = new Map();
 const PLAYER_COLORS = ["#ff7a59", "#4db6ac", "#ffd166", "#118ab2", "#ef476f", "#83c5be"];
 
 function createAppError(message, statusCode = 400) {
@@ -56,6 +60,19 @@ function normalizeQuestionSource(source, fallback = "local") {
     throw createAppError("Invalid question source.");
   }
   return value;
+}
+
+function normalizeTimeLimitMinutes(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const minutes = Number(value);
+  if (!Number.isInteger(minutes) || !TIME_LIMIT_OPTIONS_MINUTES.includes(minutes)) {
+    throw createAppError("Invalid time limit.");
+  }
+
+  return minutes === 0 ? null : minutes;
 }
 
 function normalizeChatBody(message) {
@@ -96,6 +113,36 @@ function clearRoomDisconnectTimers(room) {
   room.players.forEach((player) => cancelPlayerDisconnect(player));
 }
 
+function cancelRoomExpiration(roomCode) {
+  const timer = roomExpirationTimers.get(roomCode);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  roomExpirationTimers.delete(roomCode);
+}
+
+function clearAllRoomExpirationTimers() {
+  roomExpirationTimers.forEach((timer) => clearTimeout(timer));
+  roomExpirationTimers.clear();
+}
+
+function cancelRoomDeadline(roomCode) {
+  const timer = roomDeadlineTimers.get(roomCode);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  roomDeadlineTimers.delete(roomCode);
+}
+
+function clearAllRoomDeadlineTimers() {
+  roomDeadlineTimers.forEach((timer) => clearTimeout(timer));
+  roomDeadlineTimers.clear();
+}
+
 function createPlayer(room, name) {
   const normalizedName = normalizeName(name);
   const course = getCourseById(room.courseId);
@@ -129,6 +176,10 @@ function ensureRoomStarted(room) {
     throw createAppError("The host has not started the game yet.", 409);
   }
 
+  if (room.status === "timed_out") {
+    throw createAppError("Time is up for this room.", 409);
+  }
+
   if (room.status === "ended") {
     throw createAppError("This game has ended.", 409);
   }
@@ -144,11 +195,15 @@ function ensurePlayerCanStillPlay(player) {
   }
 }
 
+function isFinalRoomStatus(status) {
+  return status === "finished" || status === "ended" || status === "timed_out";
+}
+
 function syncRoomCompletionState(room) {
   room.finishOrder = room.finishOrder.filter((playerId) => room.players.has(playerId));
   room.winnerId = room.finishOrder[0] ?? null;
 
-  if (room.status === "waiting" || room.status === "ended") {
+  if (room.status === "waiting" || room.status === "ended" || room.status === "timed_out") {
     return;
   }
 
@@ -163,6 +218,84 @@ function syncRoomCompletionState(room) {
   room.completedAt = null;
 }
 
+function closeRoomIfExpired(roomCode) {
+  const room = roomStore.get(roomCode);
+  if (!room || room.expiresAt === null || room.expiresAt === undefined) {
+    return;
+  }
+
+  if (room.expiresAt > Date.now()) {
+    syncRoomExpiration(room);
+    return;
+  }
+
+  const message =
+    room.status === "finished"
+      ? "Round finished. Room closed."
+      : room.status === "timed_out"
+        ? "Time expired. Room closed."
+        : "Game ended. Room closed.";
+  closeRoom(room, message);
+}
+
+function syncRoomExpiration(room) {
+  cancelRoomExpiration(room.code);
+
+  if (!isFinalRoomStatus(room.status)) {
+    room.expiresAt = null;
+    return;
+  }
+
+  room.expiresAt ??= Date.now() + ROOM_POST_GAME_RETENTION_MS;
+  const delay = Math.max(0, room.expiresAt - Date.now());
+  const timer = setTimeout(() => closeRoomIfExpired(room.code), delay);
+  roomExpirationTimers.set(room.code, timer);
+}
+
+function timeOutRoom(room) {
+  if (room.status !== "active" || !room.deadlineAt) {
+    return;
+  }
+
+  cancelRoomDeadline(room.code);
+  room.status = "timed_out";
+  room.completedAt ??= Date.now();
+  room.endVotePlayerIds.clear();
+  syncRoomExpiration(room);
+  broadcastRoomState(room);
+}
+
+function closeRoomIfDeadlineReached(roomCode) {
+  const room = roomStore.get(roomCode);
+  if (!room || room.status !== "active" || !room.deadlineAt) {
+    return;
+  }
+
+  if (room.deadlineAt > Date.now()) {
+    syncRoomDeadline(room);
+    return;
+  }
+
+  timeOutRoom(room);
+}
+
+function syncRoomDeadline(room) {
+  cancelRoomDeadline(room.code);
+
+  if (room.status !== "active" || !room.deadlineAt) {
+    return;
+  }
+
+  const delay = room.deadlineAt - Date.now();
+  if (delay <= 0) {
+    timeOutRoom(room);
+    return;
+  }
+
+  const timer = setTimeout(() => closeRoomIfDeadlineReached(room.code), delay);
+  roomDeadlineTimers.set(room.code, timer);
+}
+
 function getRoomByCode(roomCode) {
   const code = String(roomCode ?? "").trim().toUpperCase();
   const room = roomStore.get(code);
@@ -171,6 +304,7 @@ function getRoomByCode(roomCode) {
     throw createAppError("Room not found.", 404);
   }
 
+  syncRoomDeadline(room);
   return room;
 }
 
@@ -203,15 +337,32 @@ function ensureUniquePlayerName(room, name) {
   }
 }
 
+function createQuestionSequenceBlock(room) {
+  const questionIds = getQuestionPool(room.difficulty, room.questionSource).map((question) => question.id);
+
+  for (let index = questionIds.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [questionIds[index], questionIds[swapIndex]] = [questionIds[swapIndex], questionIds[index]];
+  }
+
+  return questionIds;
+}
+
+function getQuestionIdForAssignment(room, assignmentIndex) {
+  while (room.questionSequence.length <= assignmentIndex) {
+    room.questionSequence.push(...createQuestionSequenceBlock(room));
+  }
+
+  return room.questionSequence[assignmentIndex];
+}
+
 function pickQuestionForPlayer(room, player) {
-  const pool = getQuestionPool(room.difficulty, room.questionSource);
-  const remaining = pool.filter((question) => !player.solvedQuestionIds.includes(question.id));
-  const selectionPool = remaining.length > 0 ? remaining : pool;
-  const question = selectionPool[Math.floor(Math.random() * selectionPool.length)];
-  player.currentQuestionId = question.id;
+  const assignmentIndex = player.currentQuestionAssignment;
+  const questionId = getQuestionIdForAssignment(room, assignmentIndex);
+  player.currentQuestionId = questionId;
   player.currentQuestionAssignment += 1;
   player.awaitingNextQuestion = false;
-  return question;
+  return getQuestionById(questionId);
 }
 
 function serializePlayer(room, player) {
@@ -226,6 +377,8 @@ function serializePlayer(room, player) {
     ball: player.ball,
     finishPlace: player.finishPlace,
     finishedAt: player.finishedAt,
+    holesCompleted: player.ball.sunk ? 1 : 0,
+    holesTotal: 1,
     distanceToHole: getDistanceToHole(course, player.ball),
     progressPercent: getProgressPercent(course, player.ball)
   };
@@ -252,8 +405,31 @@ function getSortedPlayers(room) {
       if (leftDistance !== rightDistance) {
         return leftDistance - rightDistance;
       }
-      return left.strokes - right.strokes;
+
+      const leftSolvedCount = left.solvedQuestionIds.length;
+      const rightSolvedCount = right.solvedQuestionIds.length;
+      if (leftSolvedCount !== rightSolvedCount) {
+        return rightSolvedCount - leftSolvedCount;
+      }
+
+      if (left.strokes !== right.strokes) {
+        return left.strokes - right.strokes;
+      }
+
+      return left.joinedAt - right.joinedAt;
     });
+}
+
+function serializeRoomTimer(room) {
+  return {
+    enabled: Boolean(room.timeLimitMs),
+    durationMs: room.timeLimitMs,
+    timeLimitMinutes: room.timeLimitMs ? room.timeLimitMs / 60_000 : null,
+    startedAt: room.startedAt,
+    endsAt: room.deadlineAt,
+    remainingMs: room.deadlineAt ? Math.max(room.deadlineAt - Date.now(), 0) : room.timeLimitMs,
+    expired: room.status === "timed_out"
+  };
 }
 
 function serializeRoomForPlayer(room, playerId) {
@@ -261,7 +437,7 @@ function serializeRoomForPlayer(room, playerId) {
   const course = getCourseById(room.courseId);
   const players = getSortedPlayers(room).map((entry) => serializePlayer(room, entry));
   const currentQuestion =
-    room.status === "waiting" || room.status === "ended"
+    room.status !== "active"
       ? null
       : sanitizeQuestion(getQuestionById(player.currentQuestionId));
 
@@ -275,7 +451,9 @@ function serializeRoomForPlayer(room, playerId) {
       questionSource: room.questionSource,
       createdAt: room.createdAt,
       completedAt: room.completedAt,
+      expiresAt: room.expiresAt,
       questionLanguage: "Python 3",
+      timer: serializeRoomTimer(room),
       endVotes: {
         count: room.endVotePlayerIds.size,
         total: room.playerOrder.length
@@ -352,6 +530,8 @@ function closePlayerSubscriptions(roomCode, playerId) {
 
 function closeRoom(room, message = "Room closed.") {
   clearRoomDisconnectTimers(room);
+  cancelRoomExpiration(room.code);
+  cancelRoomDeadline(room.code);
 
   const subscribers = roomSubscribers.get(room.code);
   if (subscribers) {
@@ -387,6 +567,8 @@ function finalizeDisconnectedPlayer(room, playerId) {
   }
 
   syncRoomCompletionState(room);
+  syncRoomDeadline(room);
+  syncRoomExpiration(room);
   broadcastRoomState(room);
 }
 
@@ -406,7 +588,7 @@ function schedulePlayerDisconnect(room, player, immediate = false) {
   }, PLAYER_DISCONNECT_GRACE_MS);
 }
 
-function registerPlayerConnection(player) {
+function registerPlayerConnection(room, player) {
   cancelPlayerDisconnect(player);
   player.activeConnections += 1;
 }
@@ -428,15 +610,17 @@ export function getBootstrapPayload() {
     difficulties: DIFFICULTIES,
     questionSources: QUESTION_SOURCES,
     courses: getCourseSummaries(),
+    timeLimitMinutesOptions: TIME_LIMIT_OPTIONS_MINUTES,
     limits: {
       maxPlayersPerRoom: MAX_PLAYERS_PER_ROOM
     }
   };
 }
 
-export function createRoom({ name, difficulty, courseId, questionSource }) {
+export function createRoom({ name, difficulty, courseId, questionSource, timeLimitMinutes }) {
   const normalizedDifficulty = normalizeDifficulty(difficulty);
   const normalizedQuestionSource = normalizeQuestionSource(questionSource, "local");
+  const normalizedTimeLimitMinutes = normalizeTimeLimitMinutes(timeLimitMinutes);
   const selectedCourse = getCourseById(courseId);
   let roomCode = createRoomCode();
 
@@ -458,7 +642,12 @@ export function createRoom({ name, difficulty, courseId, questionSource }) {
     chatMessages: [],
     players: new Map(),
     playerOrder: [],
-    completedAt: null
+    questionSequence: [],
+    startedAt: null,
+    timeLimitMs: normalizedTimeLimitMinutes ? normalizedTimeLimitMinutes * 60_000 : null,
+    deadlineAt: null,
+    completedAt: null,
+    expiresAt: null
   };
 
   const host = createPlayer(room, name);
@@ -520,6 +709,11 @@ export function startRoom({ roomCode, playerId, sessionId }) {
   }
 
   room.status = "active";
+  room.endVotePlayerIds.clear();
+  room.completedAt = null;
+  room.expiresAt = null;
+  room.startedAt = Date.now();
+  room.deadlineAt = room.timeLimitMs ? room.startedAt + room.timeLimitMs : null;
   room.playerOrder.forEach((id) => {
     const currentPlayer = room.players.get(id);
     if (currentPlayer && !currentPlayer.currentQuestionId) {
@@ -527,6 +721,8 @@ export function startRoom({ roomCode, playerId, sessionId }) {
     }
   });
 
+  syncRoomDeadline(room);
+  syncRoomExpiration(room);
   broadcastRoomState(room);
 
   return {
@@ -538,8 +734,8 @@ export function toggleEndVote({ roomCode, playerId, sessionId }) {
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
 
-  if (room.status === "ended") {
-    throw createAppError("This game has already ended.", 409);
+  if (isFinalRoomStatus(room.status)) {
+    throw createAppError("This game is already over.", 409);
   }
 
   if (room.endVotePlayerIds.has(player.id)) {
@@ -550,8 +746,11 @@ export function toggleEndVote({ roomCode, playerId, sessionId }) {
 
   if (room.endVotePlayerIds.size === room.playerOrder.length && room.playerOrder.length > 0) {
     room.status = "ended";
+    room.completedAt ??= Date.now();
   }
 
+  syncRoomDeadline(room);
+  syncRoomExpiration(room);
   broadcastRoomState(room);
 
   return {
@@ -564,8 +763,8 @@ export function postChatMessage({ roomCode, playerId, sessionId, message }) {
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
 
-  if (room.status === "ended") {
-    throw createAppError("This game has already ended.", 409);
+  if (isFinalRoomStatus(room.status)) {
+    throw createAppError("This game is already over.", 409);
   }
 
   room.chatMessages.push({
@@ -591,7 +790,7 @@ export function postChatMessage({ roomCode, playerId, sessionId, message }) {
 export function subscribeToRoom({ roomCode, playerId, sessionId, response }) {
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
-  registerPlayerConnection(player);
+  registerPlayerConnection(room, player);
 
   const subscription = {
     id: createId("sub"),
@@ -713,6 +912,8 @@ export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
   }
 
   syncRoomCompletionState(room);
+  syncRoomDeadline(room);
+  syncRoomExpiration(room);
   broadcastRoomState(room);
 
   return {
@@ -733,6 +934,8 @@ export function listRooms() {
 export function resetRoomServiceState() {
   roomStore.forEach((room) => clearRoomDisconnectTimers(room));
   roomStore.clear();
+  clearAllRoomDeadlineTimers();
+  clearAllRoomExpirationTimers();
   roomSubscribers.forEach((subscribers, roomCode) => {
     for (const subscription of subscribers.values()) {
       subscription.closedByServer = true;

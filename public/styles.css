@@ -244,7 +244,8 @@ textarea:focus-visible {
 }
 
 .app-shell.is-gameplay .challenge-screen,
-.app-shell.is-gameplay .golf-screen {
+.app-shell.is-gameplay .golf-screen,
+.app-shell.is-gameplay .results-screen {
   min-height: 0;
   height: 100%;
 }
@@ -496,6 +497,18 @@ label {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
   overflow: hidden;
+}
+
+.results-screen {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+}
+
+.results-panel {
+  width: min(1180px, 100%);
+  margin: 0 auto;
 }
 
 .challenge-layout {
@@ -771,6 +784,7 @@ body.theme-dark .standing-rank {
 }
 
 .course-status-card,
+.round-timer-card,
 .spectator-card,
 .standings-panel {
   display: grid;
@@ -782,6 +796,7 @@ body.theme-dark .standing-rank {
 }
 
 .course-status-card__header,
+.round-timer-card__header,
 .standings-panel__header,
 .standing-row,
 .standing-row__identity {
@@ -793,17 +808,24 @@ body.theme-dark .standing-rank {
 }
 
 .course-status-card h3,
+.round-timer-card h3,
 .spectator-card h3,
 .standings-panel h3 {
   margin: 0;
 }
 
 .course-status-card p,
+.round-timer-card p,
 .spectator-card p,
 .standing-row p {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.round-timer-card {
+  background: linear-gradient(135deg, rgba(255, 214, 102, 0.12), rgba(255, 107, 74, 0.1));
+  border-color: rgba(255, 166, 77, 0.2);
 }
 
 .course-status-card--clubhouse {
@@ -872,6 +894,116 @@ body.theme-dark .standing-rank {
   color: var(--text);
   font-weight: 700;
   text-align: right;
+}
+
+.results-panel__shell {
+  display: grid;
+  gap: 22px;
+}
+
+.results-hero,
+.results-row__header,
+.results-row__identity,
+.results-leaderboard__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.results-hero {
+  padding: 22px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(19, 39, 30, 0.08), rgba(255, 214, 102, 0.12));
+  border: 1px solid rgba(19, 39, 30, 0.1);
+}
+
+.results-hero p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  max-width: 720px;
+  line-height: 1.6;
+}
+
+.results-meta,
+.results-list {
+  display: grid;
+  gap: 12px;
+}
+
+.results-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.results-leaderboard {
+  display: grid;
+  gap: 14px;
+}
+
+.results-row {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(19, 39, 30, 0.05);
+  border: 1px solid rgba(19, 39, 30, 0.08);
+}
+
+.results-row.is-me {
+  border-color: rgba(255, 107, 74, 0.26);
+}
+
+.results-row.is-finished {
+  background: rgba(47, 143, 98, 0.08);
+}
+
+.results-row__identity {
+  align-items: center;
+}
+
+.results-row__identity strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.results-row__identity p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.results-row__stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.results-stat {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(19, 39, 30, 0.06);
+}
+
+.results-stat span {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.results-stat strong {
+  font-size: 0.95rem;
+}
+
+.results-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.results-actions .secondary {
+  margin-top: 0;
 }
 
 .test-list {
@@ -949,6 +1081,47 @@ body.theme-dark .standing-rank {
   margin-top: 0;
   padding: 10px 16px;
   border-radius: 12px;
+}
+
+.next-question-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.next-question-button:not(:disabled) {
+  box-shadow:
+    inset 0 -2px 0 rgba(0, 0, 0, 0.14),
+    0 0 0 1px rgba(255, 214, 102, 0.16),
+    0 16px 34px rgba(217, 87, 57, 0.22),
+    0 0 28px rgba(255, 214, 102, 0.22);
+}
+
+.next-question-button span {
+  position: relative;
+  display: inline-block;
+}
+
+.next-question-button:not(:disabled) span {
+  animation: next-question-text-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes next-question-text-pulse {
+  0%,
+  100% {
+    color: #fff6f1;
+    text-shadow: 0 0 0 rgba(255, 214, 102, 0);
+  }
+
+  50% {
+    color: #ffe7a8;
+    text-shadow: 0 0 14px rgba(255, 214, 102, 0.58);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .next-question-button:not(:disabled) span {
+    animation: none;
+  }
 }
 
 .course-switch-button {
@@ -1212,13 +1385,13 @@ body.is-resizing-panels * {
 .chat-end-button {
   margin-top: 0;
   padding: 11px 14px;
+  width: 100%;
   border-radius: 14px;
   background: var(--accent);
   color: #fff6f1;
 }
 
-.chat-panel__header,
-.chat-panel__vote {
+.chat-panel__header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -1277,6 +1450,12 @@ body.is-resizing-panels * {
 .chat-form__label {
   margin: 0;
   color: var(--chat-panel-text);
+}
+
+.chat-form__hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--chat-panel-muted);
 }
 
 .chat-form textarea {
@@ -1461,6 +1640,8 @@ body.theme-dark .shot-controls input[type="range"] {
 @media (max-width: 1240px) {
   .landing-layout,
   .waiting-grid,
+  .results-meta,
+  .results-row__stats,
   .challenge-layout,
   .golf-layout {
     grid-template-columns: 1fr;
@@ -1480,6 +1661,7 @@ body.theme-dark .shot-controls input[type="range"] {
   .app-shell.is-gameplay .game-shell,
   .app-shell.is-gameplay .challenge-screen,
   .app-shell.is-gameplay .golf-screen,
+  .app-shell.is-gameplay .results-screen,
   .challenge-layout {
     height: auto;
     overflow: visible;
@@ -1506,6 +1688,10 @@ body.theme-dark .shot-controls input[type="range"] {
     right: 16px;
     bottom: 16px;
   }
+
+  .results-screen {
+    padding: 16px;
+  }
 }
 
 @media (max-width: 860px) {
@@ -1519,13 +1705,16 @@ body.theme-dark .shot-controls input[type="range"] {
   .waiting-footer,
   .problem-header,
   .golf-stage-header,
-  .terminal-case__header {
+  .terminal-case__header,
+  .results-hero,
+  .results-row__header,
+  .results-row__identity,
+  .results-leaderboard__header {
     flex-direction: column;
     align-items: stretch;
   }
 
   .chat-panel__header,
-  .chat-panel__vote,
   .chat-message__meta {
     flex-direction: column;
     align-items: stretch;
@@ -1547,5 +1736,13 @@ body.theme-dark .shot-controls input[type="range"] {
 
   .chat-panel {
     width: min(calc(100vw - 20px), 360px);
+  }
+
+  .results-actions {
+    justify-content: stretch;
+  }
+
+  .results-actions .secondary {
+    width: 100%;
   }
 }

@@ -69,6 +69,7 @@ const MIN_PROBLEM_PANE_WIDTH = 320;
 const MIN_EDITOR_PANE_WIDTH = 420;
 const MIN_EDITOR_TOP_HEIGHT = 260;
 const MIN_EDITOR_TERMINAL_HEIGHT = 220;
+const ROOM_TIMER_TICK_MS = 1000;
 
 function migrateEditorLayoutStorage() {
   const version = loadStorage(EDITOR_LAYOUT_VERSION_KEY);
@@ -186,6 +187,71 @@ function formatQuestionSource(value) {
   return "Local bank";
 }
 
+function formatTimeLimitLabel(minutes) {
+  if (!minutes) {
+    return "No timer";
+  }
+
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+function formatCountdownClock(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function isRoomOver(status = state.room?.status) {
+  return status === "finished" || status === "ended" || status === "timed_out";
+}
+
+function getLiveRoomTimerMs() {
+  if (!state.room?.timer?.enabled) {
+    return null;
+  }
+
+  if (state.room.timer.endsAt) {
+    return Math.max(state.room.timer.endsAt - Date.now(), 0);
+  }
+
+  return state.room.timer.durationMs;
+}
+
+function getLiveRoomExpiryMs() {
+  if (!state.room?.expiresAt) {
+    return null;
+  }
+
+  return Math.max(state.room.expiresAt - Date.now(), 0);
+}
+
+function updateLiveTimerLabels() {
+  const timerText = state.room?.timer?.enabled ? formatCountdownClock(getLiveRoomTimerMs() ?? 0) : "";
+  document.querySelectorAll("[data-room-countdown]").forEach((node) => {
+    node.textContent = timerText;
+  });
+
+  const closeText = state.room?.expiresAt ? formatCountdownClock(getLiveRoomExpiryMs() ?? 0) : "";
+  document.querySelectorAll("[data-room-close-countdown]").forEach((node) => {
+    node.textContent = closeText;
+  });
+}
+
+window.setInterval(() => {
+  if (!state.room) {
+    return;
+  }
+
+  updateLiveTimerLabels();
+}, ROOM_TIMER_TICK_MS);
+
 function createShell() {
   const root = document.getElementById("app");
   root.innerHTML = `
@@ -235,6 +301,10 @@ function createShell() {
             <label>
               Course
               <select id="create-course" name="courseId"></select>
+            </label>
+            <label>
+              Time limit
+              <select id="create-time-limit" name="timeLimitMinutes"></select>
             </label>
             <button type="submit" class="primary">Create room</button>
           </form>
@@ -315,7 +385,9 @@ function createShell() {
                         <button id="problem-to-golf-btn" type="button" class="course-switch-button">Go to course</button>
                         <button id="run-sample-tests-btn" type="button" class="course-switch-button">Run samples</button>
                         <button id="run-tests-btn" type="button" class="primary">Run all tests</button>
-                        <button id="next-question-btn" type="button" class="course-switch-button" hidden>Next question</button>
+                        <button id="next-question-btn" type="button" class="primary next-question-button" hidden>
+                          <span>Next question</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -350,6 +422,10 @@ function createShell() {
                 <aside id="golf-controls-panel" class="panel golf-controls-panel"></aside>
               </div>
             </section>
+
+            <section id="results-screen" class="results-screen" hidden>
+              <div id="results-panel" class="results-panel"></div>
+            </section>
           </section>
         </section>
 
@@ -371,17 +447,13 @@ function createShell() {
             <div id="chat-messages" class="chat-messages"></div>
             <p id="chat-notice" class="chat-notice" hidden></p>
 
-            <div class="chat-panel__vote">
-              <p id="chat-end-votes" class="muted"></p>
-              <button id="chat-end-btn" type="button" class="chat-end-button">Vote to end game</button>
-            </div>
-
             <form id="chat-form" class="chat-form">
               <label class="chat-form__label">
                 Message
                 <textarea id="chat-input" rows="3" maxlength="320" placeholder="Type a message..."></textarea>
               </label>
-              <button id="chat-send-btn" type="submit" class="primary">Send</button>
+              <p class="chat-form__hint">Press Enter to send. Use Shift+Enter for a new line.</p>
+              <button id="chat-end-btn" type="button" class="chat-end-button">End game</button>
             </form>
           </section>
         </aside>
@@ -399,6 +471,7 @@ function createShell() {
     createDifficulty: document.getElementById("create-difficulty"),
     createQuestionSource: document.getElementById("create-question-source"),
     createCourse: document.getElementById("create-course"),
+    createTimeLimit: document.getElementById("create-time-limit"),
     landingNotice: document.getElementById("landing-notice"),
     waitingView: document.getElementById("waiting-view"),
     waitingRoomCode: document.getElementById("waiting-room-code"),
@@ -426,6 +499,8 @@ function createShell() {
     nextQuestionButton: document.getElementById("next-question-btn"),
     editorTerminal: document.getElementById("editor-terminal"),
     golfScreen: document.getElementById("golf-screen"),
+    resultsScreen: document.getElementById("results-screen"),
+    resultsPanel: document.getElementById("results-panel"),
     courseName: document.getElementById("course-name"),
     courseCanvas: document.getElementById("course-canvas"),
     golfControlsPanel: document.getElementById("golf-controls-panel"),
@@ -436,11 +511,9 @@ function createShell() {
     chatCloseButton: document.getElementById("chat-close-btn"),
     chatMessages: document.getElementById("chat-messages"),
     chatNotice: document.getElementById("chat-notice"),
-    chatEndVotes: document.getElementById("chat-end-votes"),
     chatEndButton: document.getElementById("chat-end-btn"),
     chatForm: document.getElementById("chat-form"),
-    chatInput: document.getElementById("chat-input"),
-    chatSendButton: document.getElementById("chat-send-btn")
+    chatInput: document.getElementById("chat-input")
   };
 
   elements.editorThemeSelect.innerHTML = EDITOR_THEMES.map(
@@ -472,6 +545,7 @@ function createShell() {
   elements.chatCloseButton.addEventListener("click", () => setChatOpen(false));
   elements.chatEndButton.addEventListener("click", onVoteToEndGame);
   elements.chatInput.addEventListener("input", onChatInput);
+  elements.chatInput.addEventListener("keydown", onChatInputKeyDown);
   elements.chatForm.addEventListener("submit", onSendChatMessage);
   window.addEventListener("pointermove", onResizePointerMove);
   window.addEventListener("pointerup", onResizePointerUp);
@@ -603,21 +677,24 @@ function syncQuestionDraft() {
 }
 
 function applyRoomState(payload) {
-  if (payload.room?.status === "ended") {
-    leaveRoom({ notice: "Game ended by unanimous vote." });
-    return;
-  }
-
   state.room = payload.room;
   state.me = payload.me;
   state.dragAim = null;
+  if (isRoomOver(payload.room?.status)) {
+    state.chatOpen = false;
+  }
   syncQuestionDraft();
   renderViews();
+  updateLiveTimerLabels();
 }
 
 function getCurrentStage() {
   if (!state.room || !state.me) {
     return "home";
+  }
+
+  if (isRoomOver(state.room.status)) {
+    return "results";
   }
 
   if (state.room.status === "waiting") {
@@ -628,7 +705,7 @@ function getCurrentStage() {
 }
 
 function syncShellPresentation(stage) {
-  const gameplay = stage === "challenge" || stage === "golf";
+  const gameplay = stage === "challenge" || stage === "golf" || stage === "results";
   elements.appShell.classList.toggle("is-gameplay", gameplay);
   elements.hero.hidden = gameplay;
   document.body.classList.toggle("gameplay-mode", gameplay);
@@ -801,16 +878,32 @@ function formatPlace(value) {
   return `${value}th`;
 }
 
-function getEndVoteSummary() {
+function getEndVoteButtonLabel() {
   if (!state.room?.endVotes) {
+    return state.me?.hasEndVote ? "Cancel end vote" : "End game";
+  }
+
+  const voteCount = `${state.room.endVotes.count}/${state.room.endVotes.total}`;
+  return state.me?.hasEndVote ? `Cancel end vote (${voteCount})` : `End game (${voteCount})`;
+}
+
+function getRoundTimerMarkup() {
+  if (!state.room?.timer?.enabled || state.room.status === "waiting" || isRoomOver()) {
     return "";
   }
 
-  return `${state.room.endVotes.count}/${state.room.endVotes.total} players voted to end the game.`;
-}
-
-function getEndVoteButtonLabel() {
-  return state.me?.hasEndVote ? "Cancel end vote" : "Vote to end game";
+  return `
+    <section class="round-timer-card">
+      <div class="round-timer-card__header">
+        <div>
+          <p class="panel-kicker">Round timer</p>
+          <h3>Clock is running</h3>
+        </div>
+        <span class="course-status-pill" data-room-countdown>${escapeHtml(formatCountdownClock(getLiveRoomTimerMs() ?? 0))}</span>
+      </div>
+      <p>When the timer hits zero, the room moves to the final leaderboard automatically.</p>
+    </section>
+  `;
 }
 
 function setChatOpen(nextOpen) {
@@ -821,7 +914,15 @@ function setChatOpen(nextOpen) {
 function onChatInput(event) {
   state.chatDraft = event.target.value;
   state.chatNotice = null;
-  elements.chatSendButton.disabled = state.chatBusy || !state.chatDraft.trim();
+}
+
+function onChatInputKeyDown(event) {
+  if (event.key !== "Enter" || event.shiftKey) {
+    return;
+  }
+
+  event.preventDefault();
+  void onSendChatMessage();
 }
 
 function formatChatTimestamp(value) {
@@ -846,7 +947,7 @@ function chatMessageMarkup(message) {
 }
 
 function renderChatDock() {
-  const inRoom = Boolean(state.room && state.me);
+  const inRoom = Boolean(state.room && state.me && !isRoomOver());
   elements.chatDock.hidden = !inRoom;
 
   if (!inRoom) {
@@ -855,16 +956,14 @@ function renderChatDock() {
 
   elements.chatToggleButton.hidden = state.chatOpen;
   elements.chatPanel.hidden = !state.chatOpen;
-  elements.chatEndVotes.textContent = getEndVoteSummary();
   elements.chatEndButton.textContent = getEndVoteButtonLabel();
-  elements.chatEndButton.disabled = state.busy || state.chatBusy;
+  elements.chatEndButton.disabled = state.busy || state.chatBusy || isRoomOver();
   elements.chatNotice.hidden = !state.chatNotice;
   elements.chatNotice.textContent = state.chatNotice ?? "";
   elements.chatMessages.innerHTML = state.room.chatMessages.length
     ? state.room.chatMessages.map(chatMessageMarkup).join("")
     : `<p class="chat-empty">No messages yet. Say hello.</p>`;
   elements.chatInput.value = state.chatDraft;
-  elements.chatSendButton.disabled = state.chatBusy || !state.chatDraft.trim();
 
   if (state.chatOpen) {
     requestAnimationFrame(() => {
@@ -1003,6 +1102,140 @@ function standingsPanelMarkup() {
   `;
 }
 
+function getResultsSummary() {
+  const leader = state.room?.players?.[0];
+
+  if (!state.room || !state.me) {
+    return {
+      eyebrow: "Results",
+      title: "Round complete.",
+      body: "Final standings are available below."
+    };
+  }
+
+  if (state.room.status === "timed_out") {
+    return {
+      eyebrow: "Time Expired",
+      title:
+        leader?.id === state.me.id
+          ? "Time is up. You lead the final leaderboard."
+          : `Time is up. ${leader?.name ?? "The room leader"} finished on top.`,
+      body: "Players are ranked by hole completion first, then progress toward the cup, then questions solved and strokes."
+    };
+  }
+
+  if (state.room.status === "ended") {
+    return {
+      eyebrow: "Game Ended",
+      title: leader?.id === state.me.id ? "The game ended with you on top." : `${leader?.name ?? "A player"} led when the game ended.`,
+      body: "The room was ended early, so the standings below capture the current state of the round."
+    };
+  }
+
+  return {
+    eyebrow: "Hole Complete",
+    title: state.me.finishPlace === 1 ? "You won the hole." : `${leader?.name ?? "A player"} won the hole.`,
+    body: "Everyone finished the course. Final standings are locked in below."
+  };
+}
+
+function resultsRowMarkup(player, index) {
+  const completionLabel = player.ball.sunk
+    ? player.finishPlace
+      ? `Finished ${formatPlace(player.finishPlace)}`
+      : "Hole complete"
+    : state.room.status === "timed_out"
+      ? "Time expired"
+      : "Hole incomplete";
+
+  const distanceLabel = player.ball.sunk ? "In the cup" : `${player.distanceToHole} left`;
+
+  return `
+    <article class="results-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
+      <div class="results-row__header">
+        <div class="results-row__identity">
+          <span class="standing-rank">${index + 1}</span>
+          <span class="player-color" style="background:${player.color}"></span>
+          <div>
+            <strong>${escapeHtml(player.name)}</strong>
+            <p>${escapeHtml(completionLabel)}</p>
+          </div>
+        </div>
+        <span class="course-status-pill">${escapeHtml(player.ball.sunk ? "Completed" : "In progress")}</span>
+      </div>
+      <div class="results-row__stats">
+        <div class="results-stat">
+          <span>Holes</span>
+          <strong>${player.holesCompleted}/${player.holesTotal}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Progress</span>
+          <strong>${player.ball.sunk ? "100%" : `${player.progressPercent}%`}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Questions</span>
+          <strong>${player.solvedCount}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Strokes</span>
+          <strong>${player.strokes}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Status</span>
+          <strong>${escapeHtml(distanceLabel)}</strong>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderResultsScreen() {
+  const summary = getResultsSummary();
+  const timerLabel = formatTimeLimitLabel(state.room.timer?.timeLimitMinutes);
+  const closeCountdown = state.room.expiresAt ? formatCountdownClock(getLiveRoomExpiryMs() ?? 0) : null;
+
+  elements.resultsPanel.innerHTML = `
+    <section class="panel results-panel__shell">
+      <div class="results-hero">
+        <div>
+          <p class="panel-kicker">${escapeHtml(summary.eyebrow)}</p>
+          <h2>${escapeHtml(summary.title)}</h2>
+          <p>${escapeHtml(summary.body)}</p>
+        </div>
+        <span class="course-status-pill">${state.room.finishedPlayers}/${state.room.players.length} completed</span>
+      </div>
+
+      <div class="results-meta">
+        <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.room.course.name)}</strong></div>
+        <div class="setting-row"><span>Difficulty</span><strong>${formatDifficulty(state.room.difficulty)}</strong></div>
+        <div class="setting-row"><span>Question bank</span><strong>${formatQuestionSource(state.room.questionSource)}</strong></div>
+        <div class="setting-row"><span>Time limit</span><strong>${escapeHtml(timerLabel)}</strong></div>
+        <div class="setting-row"><span>Room code</span><strong>${escapeHtml(state.room.code)}</strong></div>
+        <div class="setting-row"><span>Room closes in</span><strong data-room-close-countdown>${escapeHtml(closeCountdown ?? "Closing soon")}</strong></div>
+      </div>
+
+      <section class="results-leaderboard">
+        <div class="results-leaderboard__header">
+          <div>
+            <p class="panel-kicker">Leaderboard</p>
+            <h3>Final standings</h3>
+          </div>
+        </div>
+        <div class="results-list">
+          ${state.room.players.map(resultsRowMarkup).join("")}
+        </div>
+      </section>
+
+      <div class="results-actions">
+        <button id="results-leave-btn" type="button" class="secondary">Leave room</button>
+      </div>
+    </section>
+  `;
+
+  document.getElementById("results-leave-btn")?.addEventListener("click", () => leaveRoom());
+  updateLiveTimerLabels();
+}
+
 function waitingPlayerMarkup(player) {
   return `
     <article class="waiting-player ${player.id === state.me.id ? "is-me" : ""}">
@@ -1017,7 +1250,7 @@ function waitingPlayerMarkup(player) {
 
 function renderWaitingRoom() {
   elements.waitingRoomCode.textContent = state.room.code;
-  elements.waitingSubtitle.textContent = `${formatDifficulty(state.room.difficulty)} Python room • ${formatQuestionSource(state.room.questionSource)} • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
+  elements.waitingSubtitle.textContent = `${formatDifficulty(state.room.difficulty)} Python room • ${formatQuestionSource(state.room.questionSource)} • ${formatTimeLimitLabel(state.room.timer?.timeLimitMinutes)} • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
   elements.waitingPlayerList.innerHTML = state.room.players.map(waitingPlayerMarkup).join("");
   elements.copyRoomButton.textContent = state.copyRoomLabel ?? "Copy room key";
   elements.waitingSettings.innerHTML = `
@@ -1025,6 +1258,7 @@ function renderWaitingRoom() {
     <div class="setting-row"><span>Question bank</span><strong>${formatQuestionSource(state.room.questionSource)}</strong></div>
     <div class="setting-row"><span>Language</span><strong>${escapeHtml(state.room.questionLanguage)}</strong></div>
     <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.room.course.name)}</strong></div>
+    <div class="setting-row"><span>Time limit</span><strong>${escapeHtml(formatTimeLimitLabel(state.room.timer?.timeLimitMinutes))}</strong></div>
   `;
 
   if (state.me.isHost) {
@@ -1210,6 +1444,7 @@ function renderProblemPanel() {
     </div>
 
     ${courseStatusCardMarkup()}
+    ${getRoundTimerMarkup()}
 
     <section class="problem-section">
       <div class="problem-meta">
@@ -1263,7 +1498,7 @@ function renderProblemPanel() {
 
 function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
-  const spectatorMode = state.me.ball.sunk || state.room.status === "finished";
+  const spectatorMode = state.me.ball.sunk || isRoomOver();
   elements.editorThemeSelect.value = theme.id;
   elements.resetCodeButton.disabled = spectatorMode || state.busy || !state.editorReady;
   elements.runSampleTestsButton.disabled = spectatorMode || state.busy || !state.editorReady;
@@ -1302,7 +1537,7 @@ function renderEditor() {
 function renderGolfControls() {
   const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
   const powerPercent = Math.round(state.shot.power * 100);
-  const spectatorMode = state.me.ball.sunk || state.room.status === "finished";
+  const spectatorMode = state.me.ball.sunk || isRoomOver();
   const statusCard = courseStatusCardMarkup();
   const standingsCard = standingsPanelMarkup();
 
@@ -1315,14 +1550,15 @@ function renderGolfControls() {
     </div>
 
     ${statusCard}
+    ${getRoundTimerMarkup()}
 
     ${
       spectatorMode
         ? `
           <section class="spectator-card">
             <p class="panel-kicker">Spectator Mode</p>
-            <h3>${state.room.status === "finished" ? "Final hole results" : "Watch the rest of the hole"}</h3>
-            <p>${state.room.status === "finished"
+            <h3>${isRoomOver() ? "Final hole results" : "Watch the rest of the hole"}</h3>
+            <p>${isRoomOver()
               ? "Swing controls are disabled because every player has finished."
               : "Your ball is off the course now. Stay on the golf view to watch the remaining players navigate the hole."}</p>
           </section>
@@ -1368,7 +1604,7 @@ function renderGolfControls() {
   swingButton.disabled =
     spectatorMode ||
     !canTakeSwing() ||
-    state.room.status === "finished" ||
+    isRoomOver() ||
     state.me.ball.sunk ||
     state.busy ||
     state.swingAnimating;
@@ -1390,8 +1626,7 @@ function drawCourse() {
     players: state.room.players,
     meId: state.me.id,
     mePlayer: state.room.players.find((player) => player.id === state.me.id),
-    preview:
-      state.room.status !== "finished" && !state.me.ball.sunk && !state.swingAnimating ? state.shot : null,
+    preview: state.room.status === "active" && !state.me.ball.sunk && !state.swingAnimating ? state.shot : null,
     dragAim: state.dragAim
   });
 }
@@ -1403,6 +1638,7 @@ function renderGame() {
   const showingGolf = state.gameScreen === "golf";
   elements.challengeScreen.hidden = showingGolf;
   elements.golfScreen.hidden = !showingGolf;
+  elements.resultsScreen.hidden = true;
 
   if (showingGolf) {
     renderGolfControls();
@@ -1428,6 +1664,7 @@ function renderViews() {
   elements.gameShell.hidden = stage === "home" || stage === "waiting";
   elements.challengeScreen.hidden = stage !== "challenge";
   elements.golfScreen.hidden = stage !== "golf";
+  elements.resultsScreen.hidden = stage !== "results";
   elements.gameBanner.hidden = true;
   renderChatDock();
 
@@ -1437,6 +1674,11 @@ function renderViews() {
 
   if (stage === "waiting") {
     renderWaitingRoom();
+    return;
+  }
+
+  if (stage === "results") {
+    renderResultsScreen();
     return;
   }
 
@@ -1513,7 +1755,7 @@ async function onStartGame() {
 }
 
 async function onSubmitSolution(scope = "all") {
-  if (!state.session || state.busy || !state.editorReady || state.me?.ball.sunk || state.room?.status === "finished") {
+  if (!state.session || state.busy || !state.editorReady || state.me?.ball.sunk || isRoomOver(state.room?.status)) {
     return;
   }
 
@@ -1550,7 +1792,7 @@ async function onSubmitSolution(scope = "all") {
 }
 
 async function onAdvanceQuestion() {
-  if (!state.session || state.busy || !state.me?.awaitingNextQuestion || state.me?.ball.sunk || state.room?.status === "finished") {
+  if (!state.session || state.busy || !state.me?.awaitingNextQuestion || state.me?.ball.sunk || isRoomOver(state.room?.status)) {
     return;
   }
 
@@ -1616,10 +1858,14 @@ async function onTakeSwing() {
       totalTests: 0,
       results: []
     };
-    renderProblemPanel();
+    if (getCurrentStage() === "challenge" && state.room && state.me) {
+      renderProblemPanel();
+    }
   } finally {
     state.busy = false;
-    renderGolfControls();
+    if (getCurrentStage() === "golf" && state.room && state.me) {
+      renderGolfControls();
+    }
   }
 }
 
@@ -1654,7 +1900,7 @@ function canAimOnCourse() {
   return Boolean(
     state.room &&
       state.me &&
-      state.room.status !== "waiting" &&
+      state.room.status === "active" &&
       state.gameScreen === "golf" &&
       !state.me.ball.sunk &&
       !state.busy &&
@@ -1859,7 +2105,7 @@ async function restoreSession() {
 }
 
 async function onSendChatMessage(event) {
-  event.preventDefault();
+  event?.preventDefault();
 
   if (!state.session || state.chatBusy || !state.chatDraft.trim()) {
     return;
@@ -1938,6 +2184,13 @@ async function init() {
 
   elements.createCourse.innerHTML = state.bootstrap.courses
     .map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`)
+    .join("");
+
+  elements.createTimeLimit.innerHTML = state.bootstrap.timeLimitMinutesOptions
+    .map((minutes) => {
+      const label = minutes === 0 ? "No timer" : formatTimeLimitLabel(minutes);
+      return `<option value="${minutes}">${escapeHtml(label)}</option>`;
+    })
     .join("");
 
   await restoreSession();

@@ -19,6 +19,8 @@ pnpm-debug.log*
 
 .cache/
 .parcel-cache/
+playwright-report/
+test-results/
 
 .idea/
 .vscode/

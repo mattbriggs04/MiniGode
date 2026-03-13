@@ -270,6 +270,7 @@ const server = http.createServer(async (request, response) => {
 
 const DEFAULT_PORT = 3000;
 const MAX_PORT_FALLBACKS = 10;
+const DEFAULT_HOST = process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1";
 
 function parseRequestedPort(value) {
   if (value === undefined || value === null || value === "") {
@@ -284,22 +285,39 @@ function parseRequestedPort(value) {
   return port;
 }
 
-function logListeningPort(preferredPort, actualPort) {
+function parseRequestedHost(value) {
+  const host = String(value ?? DEFAULT_HOST).trim();
+  return host || DEFAULT_HOST;
+}
+
+function formatListeningUrl(host, port) {
+  if (host === "0.0.0.0" || host === "::") {
+    return `http://127.0.0.1:${port}`;
+  }
+
+  return `http://${host}:${port}`;
+}
+
+function logListeningPort(preferredPort, actualPort, host) {
+  const displayUrl = formatListeningUrl(host, actualPort);
   if (actualPort !== preferredPort) {
-    console.log(`Port ${preferredPort} was busy, using http://localhost:${actualPort} instead`);
+    console.log(`Port ${preferredPort} was busy, using ${displayUrl} instead`);
     return;
   }
 
-  console.log(`MiniGode server listening on http://localhost:${actualPort}`);
+  console.log(`MiniGode server listening on ${displayUrl}`);
+  if (host === "0.0.0.0" || host === "::") {
+    console.log(`Server is bound on ${host}; use this machine's public or private IP for remote players.`);
+  }
 }
 
-function startServer(preferredPort, allowFallback) {
+function startServer(preferredPort, host, allowFallback) {
   let candidatePort = preferredPort;
 
   const tryListen = () => {
     server.once("error", handleError);
     server.once("listening", handleListening);
-    server.listen(candidatePort);
+    server.listen(candidatePort, host);
   };
 
   const cleanup = () => {
@@ -311,7 +329,7 @@ function startServer(preferredPort, allowFallback) {
     cleanup();
     const address = server.address();
     const actualPort = typeof address === "object" && address ? address.port : candidatePort;
-    logListeningPort(preferredPort, actualPort);
+    logListeningPort(preferredPort, actualPort, host);
   };
 
   const handleError = (error) => {
@@ -336,6 +354,7 @@ function startServer(preferredPort, allowFallback) {
 }
 
 const requestedPort = parseRequestedPort(process.env.PORT);
+const requestedHost = parseRequestedHost(process.env.HOST);
 const preferredPort = requestedPort ?? DEFAULT_PORT;
 
-startServer(preferredPort, requestedPort === null);
+startServer(preferredPort, requestedHost, requestedPort === null);

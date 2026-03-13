@@ -4,6 +4,7 @@ import {
   advanceQuestion,
   createRoom,
   disconnectPlayerSession,
+  getBootstrapPayload,
   getRoomState,
   joinRoom,
   listRooms,
@@ -210,6 +211,62 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   assert.equal(refreshed.me.strokes, 1);
 });
 
+test("players receive the same ordered question sequence within a room", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  const guestStart = getRoomState({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  assert.equal(started.state.me.currentQuestion.id, guestStart.me.currentQuestion.id);
+
+  const firstFunctionName = started.state.me.currentQuestion.functionName;
+  submitAnswer({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    submission: SOLUTIONS[firstFunctionName]
+  });
+  submitAnswer({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    submission: SOLUTIONS[firstFunctionName]
+  });
+
+  const hostAdvanced = advanceQuestion({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+  const guestAdvanced = advanceQuestion({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  assert.notEqual(hostAdvanced.state.me.currentQuestion.id, started.state.me.currentQuestion.id);
+  assert.equal(hostAdvanced.state.me.currentQuestion.id, guestAdvanced.state.me.currentQuestion.id);
+});
+
 test("sample-only runs do not award swings or rotate the question", () => {
   const created = createRoom({
     name: "Ada",
@@ -238,6 +295,10 @@ test("sample-only runs do not award swings or rotate the question", () => {
   assert.equal(sampled.state.me.swingCredits, 0);
   assert.equal(sampled.state.me.currentQuestion.id, questionId);
   assert.equal(sampled.state.me.awaitingNextQuestion, false);
+});
+
+test("bootstrap advertises supported room timer options", () => {
+  assert.deepEqual(getBootstrapPayload().timeLimitMinutesOptions, [0, 5, 10, 15, 20, 30, 45, 60]);
 });
 
 test("players can join before the host starts and are blocked after start", () => {
@@ -306,6 +367,136 @@ test("the game ends only after every player votes to end it", () => {
   assert.equal(secondVote.state.room.status, "ended");
   assert.equal(secondVote.state.room.endVotes.count, 2);
   assert.equal(secondVote.state.me.hasEndVote, true);
+});
+
+test("timed rooms expose timer metadata and transition to timed_out when the deadline passes", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local",
+    timeLimitMinutes: 5
+  });
+
+  assert.equal(created.state.room.timer.enabled, true);
+  assert.equal(created.state.room.timer.timeLimitMinutes, 5);
+  assert.equal(created.state.room.timer.startedAt, null);
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(started.state.room.status, "active");
+  assert.ok(started.state.room.timer.startedAt !== null);
+  assert.ok(started.state.room.timer.endsAt > started.state.room.timer.startedAt);
+  assert.equal(started.state.room.timer.remainingMs, 300_000);
+
+  t.mock.timers.tick(300_000);
+
+  const timedOut = getRoomState({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(timedOut.room.status, "timed_out");
+  assert.ok(timedOut.room.completedAt);
+  assert.equal(timedOut.room.timer.expired, true);
+  assert.equal(timedOut.room.timer.remainingMs, 0);
+  assert.equal(timedOut.me.currentQuestion, null);
+
+  assert.throws(
+    () =>
+      submitAnswer({
+        roomCode: created.roomCode,
+        playerId: created.playerId,
+        sessionId: created.sessionId,
+        submission: SOLUTIONS.contains_duplicate
+      }),
+    /Time is up/
+  );
+
+  assert.throws(
+    () =>
+      takeSwing({
+        roomCode: created.roomCode,
+        playerId: created.playerId,
+        sessionId: created.sessionId,
+        angle: -0.4,
+        power: 0.5
+      }),
+    /Time is up/
+  );
+
+  assert.throws(
+    () =>
+      postChatMessage({
+        roomCode: created.roomCode,
+        playerId: created.playerId,
+        sessionId: created.sessionId,
+        message: "Too late"
+      }),
+    /already over/
+  );
+});
+
+test("ended rooms are removed shortly after unanimous end vote", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  toggleEndVote({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+  toggleEndVote({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  assert.equal(listRooms().length, 1);
+  t.mock.timers.tick(30_000);
+  assert.equal(listRooms().length, 0);
+});
+
+test("timed out rooms are removed after the post-game retention window", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseId: "sunset-switchbacks",
+    questionSource: "local",
+    timeLimitMinutes: 5
+  });
+
+  startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  t.mock.timers.tick(300_000);
+  assert.equal(listRooms().length, 1);
+
+  t.mock.timers.tick(30_000);
+  assert.equal(listRooms().length, 0);
 });
 
 test("chat messages are attached to room state", () => {
@@ -505,6 +696,34 @@ test("single-player rounds record completion details when the hole is finished",
   assert.equal(finished.state.me.ball.sunk, true);
   assert.equal(finished.state.me.finishPlace, 1);
   assert.ok(finished.state.me.finishedAt);
+});
+
+test("finished rooms are removed after the post-game retention window", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const created = createRoom({
+    name: "dev$mode!",
+    difficulty: "easy",
+    courseId: "meadow-run",
+    questionSource: "local"
+  });
+
+  startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  takeSwing({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    ...MEADOW_RUN_SINK_SHOT
+  });
+
+  assert.equal(listRooms().length, 1);
+  t.mock.timers.tick(30_000);
+  assert.equal(listRooms().length, 0);
 });
 
 test("rounds stay active until every remaining player finishes the hole", () => {

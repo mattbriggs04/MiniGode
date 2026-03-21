@@ -23,6 +23,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDirectory = path.resolve(__dirname, "../public");
+const sharedDirectory = path.resolve(__dirname, "../shared");
 const monacoDirectory = path.resolve(__dirname, "../node_modules/monaco-editor/min");
 
 const MIME_TYPES = {
@@ -136,6 +137,11 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/courses") {
       sendJson(response, 200, { courses: getCourseCatalog() });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/shared/physics.js") {
+      await serveFileFromDirectory(sharedDirectory, "/physics.js", response);
       return;
     }
 

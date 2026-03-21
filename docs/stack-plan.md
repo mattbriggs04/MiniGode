@@ -7,7 +7,7 @@ The MVP is a browser-based multiplayer room game:
 - One player creates a room and receives a room key.
 - Other players join with that key.
 - Each player receives JavaScript interview-style coding prompts.
-- A correct solution grants exactly one golf swing credit.
+- A correct solution grants golf swing credits based on problem difficulty.
 - Players spend credits to hit their ball through the same mini-golf course.
 - The first player to sink the ball ends the round.
 

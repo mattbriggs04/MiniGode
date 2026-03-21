@@ -1,6 +1,6 @@
 # MiniGode
 
-MiniGode (/ˈmɪni ɡoʊd/) is a multiplayer browser game where players solve coding questions to earn golf swings. Correct solutions unlock one shot at the course. The first player to hole out wins the room.
+MiniGode (/ˈmɪni ɡoʊd/) is a multiplayer browser game where players solve coding questions to earn golf swings. Correct solutions award swing credits based on difficulty, and each shot costs one credit. The first player to hole out wins the room.
 
 ## Tech stack
 

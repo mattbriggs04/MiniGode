@@ -39,7 +39,7 @@ This revision changes both the UX and execution model:
    - verifies the expected function exists
    - runs each test case
    - returns structured JSON results
-5. Node interprets that result and awards exactly one swing credit for a fully passing solution.
+5. Node interprets that result and awards swing credits based on the solved problem difficulty for a fully passing solution.
 
 Notes:
 
@@ -116,7 +116,7 @@ Notes:
 
 - Update evaluator tests for Python submissions.
 - Keep room-service tests to verify:
-  - correct Python answer grants one swing credit
+  - correct Python answers grant difficulty-based swing credits
   - a swing consumes credit and increments strokes
 - Run `npm test`.
 - Run `npm run dev` and confirm the app still falls forward if port `3000` is occupied.

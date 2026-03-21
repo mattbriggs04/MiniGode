@@ -249,6 +249,15 @@ function formatDifficulty(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
 }
 
+function formatSwingCreditRules(rules = {}) {
+  const orderedDifficulties = ["easy", "medium", "hard"];
+  const parts = orderedDifficulties
+    .filter((difficulty) => Number.isInteger(rules[difficulty]))
+    .map((difficulty) => `${formatDifficulty(difficulty)} = ${rules[difficulty]}`);
+
+  return parts.length ? parts.join(" • ") : "Difficulty-based swing payouts.";
+}
+
 function formatQuestionSource(value) {
   if (value === "huggingface") {
     return "Hugging Face";
@@ -333,7 +342,7 @@ function createShell() {
       <button id="page-theme-toggle-btn" type="button" class="page-theme-toggle"></button>
 
       <header class="hero">
-        <p class="eyebrow">Mini-golf meets coding interviews</p>
+        <p class="eyebrow">Mini Golf + Code = MiniGode</p>
         <h1>MiniGode</h1>
         <p class="hero-copy">Create a room, wait for everyone to join, then solve Python interview problems to earn swings on the course.</p>
       </header>
@@ -350,11 +359,12 @@ function createShell() {
               </article>
               <article>
                 <strong>Solve Python questions</strong>
-                <p>Each fully correct submission awards one swing credit.</p>
+                <p>Each fully correct submission awards swing credits based on problem difficulty.</p>
+                <p id="landing-credit-rules" class="muted">Difficulty-based swing payouts.</p>
               </article>
               <article>
                 <strong>Switch to the course</strong>
-                <p>Spend credits to aim around walls, avoid sand, and finish first.</p>
+                <p>1 credit = 1 swing. Try to finish the hole first!</p>
               </article>
             </div>
             <div class="intro-actions">
@@ -579,6 +589,7 @@ function createShell() {
     themeToggleButton: document.getElementById("page-theme-toggle-btn"),
     hero: root.querySelector(".hero"),
     landingView: document.getElementById("landing-view"),
+    landingCreditRules: document.getElementById("landing-credit-rules"),
     roomStage: document.getElementById("room-stage"),
     createForm: document.getElementById("create-form"),
     soloForm: document.getElementById("solo-form"),
@@ -2671,6 +2682,7 @@ async function init() {
     return;
   }
 
+  elements.landingCreditRules.textContent = formatSwingCreditRules(state.bootstrap.swingCreditsByDifficulty);
   elements.createDifficulty.innerHTML = state.bootstrap.difficulties
     .map((difficulty) => `<option value="${difficulty}">${formatDifficulty(difficulty)}</option>`)
     .join("");

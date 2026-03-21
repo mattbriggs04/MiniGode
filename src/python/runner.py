@@ -536,7 +536,7 @@ def build_summary(results, scope="all"):
     if scope == "sample" and tests_passed == len(results):
         message = "Sample tests passed. Hidden tests not run."
     elif tests_passed == len(results):
-        message = "All tests passed. Swing credit awarded."
+        message = "All tests passed."
     elif first_failure and "error" in first_failure:
         message = f"Runtime error: {first_failure['error']}"
     else:

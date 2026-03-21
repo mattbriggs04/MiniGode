@@ -135,10 +135,10 @@ const SOLUTIONS = {
 `
 };
 
-test("room flow awards a swing for a correct solution, waits for advance, and spends it on a shot", () => {
+test("room flow awards difficulty-based swings, waits for advance, and spends them one at a time", () => {
   const created = createRoom({
     name: "Ada",
-    difficulty: "easy",
+    difficulty: "medium",
     courseId: "sunset-switchbacks",
     questionSource: "local"
   });
@@ -165,7 +165,8 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   });
 
   assert.equal(solved.evaluation.passed, true);
-  assert.equal(solved.state.me.swingCredits, 1);
+  assert.equal(solved.evaluation.message, "All tests passed. 3 swing credits awarded.");
+  assert.equal(solved.state.me.swingCredits, 3);
   assert.equal(solved.state.me.currentQuestion.id, firstQuestionId);
   assert.equal(solved.state.me.currentQuestionAssignment, firstAssignment);
   assert.equal(solved.state.me.awaitingNextQuestion, true);
@@ -178,7 +179,8 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   });
 
   assert.equal(repeatedSolve.evaluation.passed, true);
-  assert.equal(repeatedSolve.state.me.swingCredits, 1);
+  assert.equal(repeatedSolve.evaluation.message, "All tests passed.");
+  assert.equal(repeatedSolve.state.me.swingCredits, 3);
   assert.equal(repeatedSolve.state.me.currentQuestion.id, firstQuestionId);
 
   const advanced = advanceQuestion({
@@ -199,7 +201,7 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
     power: 0.58
   });
 
-  assert.equal(swing.state.me.swingCredits, 0);
+  assert.equal(swing.state.me.swingCredits, 2);
   assert.equal(swing.state.me.strokes, 1);
 
   const refreshed = getRoomState({
@@ -209,6 +211,47 @@ test("room flow awards a swing for a correct solution, waits for advance, and sp
   });
 
   assert.equal(refreshed.me.strokes, 1);
+});
+
+test("correct solutions award configured swing credits for each difficulty", () => {
+  const expectedCreditsByDifficulty = {
+    easy: 1,
+    medium: 3,
+    hard: 7
+  };
+
+  for (const [difficulty, expectedCredits] of Object.entries(expectedCreditsByDifficulty)) {
+    const created = createRoom({
+      name: "Ada",
+      difficulty,
+      courseId: "sunset-switchbacks",
+      questionSource: "local"
+    });
+
+    const started = startRoom({
+      roomCode: created.roomCode,
+      playerId: created.playerId,
+      sessionId: created.sessionId
+    });
+
+    assert.equal(started.state.me.currentQuestion.difficulty, difficulty);
+
+    const solved = submitAnswer({
+      roomCode: created.roomCode,
+      playerId: created.playerId,
+      sessionId: created.sessionId,
+      submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
+    });
+
+    assert.equal(solved.evaluation.passed, true);
+    assert.equal(
+      solved.evaluation.message,
+      `All tests passed. ${expectedCredits} swing credit${expectedCredits === 1 ? "" : "s"} awarded.`
+    );
+    assert.equal(solved.state.me.swingCredits, expectedCredits);
+
+    resetRoomServiceState();
+  }
 });
 
 test("players receive the same ordered question sequence within a room", () => {
@@ -297,7 +340,12 @@ test("sample-only runs do not award swings or rotate the question", () => {
   assert.equal(sampled.state.me.awaitingNextQuestion, false);
 });
 
-test("bootstrap advertises supported room timer options", () => {
+test("bootstrap advertises supported room options and swing credit rules", () => {
+  assert.deepEqual(getBootstrapPayload().swingCreditsByDifficulty, {
+    easy: 1,
+    medium: 3,
+    hard: 7
+  });
   assert.deepEqual(getBootstrapPayload().timeLimitMinutesOptions, [0, 5, 10, 15, 20, 30, 45, 60]);
 });
 

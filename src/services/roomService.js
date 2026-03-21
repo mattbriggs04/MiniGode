@@ -5,6 +5,11 @@ import {
   getQuestionById,
   getQuestionPool
 } from "../data/questions.js";
+import {
+  SWING_CREDITS_BY_DIFFICULTY,
+  formatSwingCredits,
+  getSwingCreditsForDifficulty
+} from "../config/gameplay.js";
 import { createId, createRoomCode } from "../lib/ids.js";
 import {
   createSpawnBall,
@@ -667,6 +672,7 @@ export function getBootstrapPayload() {
     difficulties: DIFFICULTIES,
     questionSources: QUESTION_SOURCES,
     courses: getCourseSummaries(),
+    swingCreditsByDifficulty: { ...SWING_CREDITS_BY_DIFFICULTY },
     timeLimitMinutesOptions: TIME_LIMIT_OPTIONS_MINUTES,
     limits: {
       maxPlayersPerRoom: MAX_PLAYERS_PER_ROOM
@@ -894,20 +900,22 @@ export function submitAnswer({ roomCode, playerId, sessionId, submission, scope 
   ensureRoomStarted(room);
   ensurePlayerCanStillPlay(player);
   const question = getQuestionById(player.currentQuestionId);
-
   const evaluation = evaluateSubmission(question, String(submission ?? ""), scope);
+  const creditsAwarded = getSwingCreditsForDifficulty(question.difficulty);
 
-  if (evaluation.passed && scope !== "sample" && !player.awaitingNextQuestion && !player.devModeEnabled) {
-    player.swingCredits += 1;
+  if (evaluation.passed && evaluation.scope !== "sample" && !player.awaitingNextQuestion && !player.devModeEnabled) {
+    player.swingCredits += creditsAwarded;
     if (!player.solvedQuestionIds.includes(question.id)) {
       player.solvedQuestionIds.push(question.id);
     }
     player.awaitingNextQuestion = true;
-  } else if (evaluation.passed && scope !== "sample" && !player.awaitingNextQuestion && player.devModeEnabled) {
+    evaluation.message = `All tests passed. ${formatSwingCredits(creditsAwarded)} awarded.`;
+  } else if (evaluation.passed && evaluation.scope !== "sample" && !player.awaitingNextQuestion && player.devModeEnabled) {
     if (!player.solvedQuestionIds.includes(question.id)) {
       player.solvedQuestionIds.push(question.id);
     }
     player.awaitingNextQuestion = true;
+    evaluation.message = "All tests passed. Unlimited swings enabled.";
   }
 
   broadcastRoomState(room);

@@ -198,6 +198,155 @@ const courseCatalog = [
       }
     ]
   }
+  {
+    id: "water-world",
+    name: "Water World",
+    description: "A map with lots of water.",
+    width: 1080,
+    height: 450,
+    tee: {
+      x: 157,
+      y: 200
+    },
+    hole: {
+      x: 908,
+      y: 235,
+      radius: 18
+    },
+    walls: [
+      {
+        x: 775,
+        y: 50,
+        width: 175,
+        height: 25
+      },
+      {
+        x: 773,
+        y: 323,
+        width: 175,
+        height: 25
+      },
+      {
+        x: 40,
+        y: 100,
+        width: 30,
+        height: 200
+      },
+      {
+        x: 40,
+        y: 100,
+        width: 200,
+        height: 30
+      },
+      {
+        x: 40,
+        y: 270,
+        width: 200,
+        height: 30
+      },
+      {
+        x: 500,
+        y: 150,
+        width: 50,
+        height: 100
+      },
+      {
+        x: 400,
+        y: 320,
+        width: 40,
+        height: 40
+      },
+      {
+        x: 470,
+        y: 20,
+        width: 50,
+        height: 60
+      }
+    ],
+    sandTraps: [],
+    waterHazards: [
+      {
+        x: 955,
+        y: 155,
+        width: 65,
+        height: 145
+      },
+      {
+        x: 675,
+        y: 0,
+        width: 275,
+        height: 45
+      },
+      {
+        x: 350,
+        y: 50,
+        width: 100,
+        height: 100
+      },
+      {
+        x: 630,
+        y: 240,
+        width: 60,
+        height: 60
+      },
+      {
+        x: 440,
+        y: 330,
+        width: 110,
+        height: 70
+      },
+      {
+        x: 60,
+        y: 370,
+        width: 80,
+        height: 40
+      },
+      {
+        x: 60,
+        y: 40,
+        width: 130,
+        height: 30
+      },
+      {
+        x: 310,
+        y: 210,
+        width: 50,
+        height: 40
+      },
+      {
+        x: 250,
+        y: 340,
+        width: 140,
+        height: 70
+      },
+      {
+        x: 690,
+        y: 370,
+        width: 90,
+        height: 70
+      },
+      {
+        x: 630,
+        y: 80,
+        width: 90,
+        height: 70
+      },
+      {
+        x: 790,
+        y: 170,
+        width: 50,
+        height: 110
+      }
+    ],
+    accents: [
+      {
+        x: 860,
+        y: 180,
+        width: 90,
+        height: 100
+      }
+    ]
+  }
 ];
 
 export const COURSE_CATALOG = courseCatalog;

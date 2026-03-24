@@ -12,6 +12,7 @@ async function createRoom(page, {
   courseIds = null
 }) {
   await page.goto("/");
+  await page.locator('#landing-tab-create').click();
   await page.locator('#create-form input[name="name"]').fill(name);
   await page.locator("#create-difficulty-mode").selectOption(difficultyMode);
   if (difficultyMode === "fixed") {
@@ -41,6 +42,7 @@ async function createRoom(page, {
 
 async function joinRoom(page, { roomCode, name }) {
   await page.goto("/");
+  await page.locator('#landing-tab-join').click();
   await page.locator('#join-form input[name="name"]').fill(name);
   await page.locator('#join-form input[name="roomCode"]').fill(roomCode);
   await page.locator('#join-form button[type="submit"]').click();

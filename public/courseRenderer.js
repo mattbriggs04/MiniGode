@@ -2,6 +2,26 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getCourseRects(course, fieldName, legacyFieldName = null) {
+  if (Array.isArray(course?.[fieldName])) {
+    return course[fieldName];
+  }
+
+  if (legacyFieldName && Array.isArray(course?.[legacyFieldName])) {
+    return course[legacyFieldName];
+  }
+
+  return [];
+}
+
+function fillRoundedRects(context, rects, radius) {
+  rects.forEach((rect) => {
+    context.beginPath();
+    context.roundRect(rect.x, rect.y, rect.width, rect.height, radius);
+    context.fill();
+  });
+}
+
 function interpolatePoint(path, progress) {
   if (!path?.length) {
     return null;
@@ -109,6 +129,10 @@ export class CourseRenderer {
 
   drawCourse(course) {
     const context = this.context;
+    const accents = getCourseRects(course, "accents");
+    const sandTraps = getCourseRects(course, "sandTraps");
+    const waterHazards = getCourseRects(course, "waterHazards", "water");
+    const walls = getCourseRects(course, "walls");
     const gradient = context.createLinearGradient(0, 0, course.width, course.height);
     gradient.addColorStop(0, "#5b9a62");
     gradient.addColorStop(1, "#437a4b");
@@ -116,25 +140,44 @@ export class CourseRenderer {
     context.fillRect(0, 0, course.width, course.height);
 
     context.fillStyle = "rgba(255, 255, 255, 0.08)";
-    course.accents.forEach((accent) => {
+    fillRoundedRects(context, accents, 22);
+
+    waterHazards.forEach((hazard) => {
+      const waterFill = context.createLinearGradient(hazard.x, hazard.y, hazard.x + hazard.width, hazard.y + hazard.height);
+      waterFill.addColorStop(0, "rgba(73, 171, 234, 0.88)");
+      waterFill.addColorStop(1, "rgba(28, 101, 177, 0.9)");
+      context.fillStyle = waterFill;
       context.beginPath();
-      context.roundRect(accent.x, accent.y, accent.width, accent.height, 22);
+      context.roundRect(hazard.x, hazard.y, hazard.width, hazard.height, 28);
       context.fill();
+
+      context.strokeStyle = "rgba(225, 248, 255, 0.34)";
+      context.lineWidth = 3;
+      context.beginPath();
+      context.roundRect(hazard.x + 1.5, hazard.y + 1.5, hazard.width - 3, hazard.height - 3, 26);
+      context.stroke();
+
+      const rippleSpacing = Math.max(18, Math.min(hazard.height / 2.4, 28));
+      context.strokeStyle = "rgba(241, 251, 255, 0.22)";
+      context.lineWidth = 2;
+      for (let offset = rippleSpacing; offset < hazard.height; offset += rippleSpacing) {
+        context.beginPath();
+        context.moveTo(hazard.x + 18, hazard.y + offset);
+        context.quadraticCurveTo(
+          hazard.x + hazard.width / 2,
+          hazard.y + offset - 8,
+          hazard.x + hazard.width - 18,
+          hazard.y + offset
+        );
+        context.stroke();
+      }
     });
 
     context.fillStyle = "#d7b267";
-    course.sandTraps.forEach((trap) => {
-      context.beginPath();
-      context.roundRect(trap.x, trap.y, trap.width, trap.height, 28);
-      context.fill();
-    });
+    fillRoundedRects(context, sandTraps, 28);
 
     context.fillStyle = "#5d3a1a";
-    course.walls.forEach((wall) => {
-      context.beginPath();
-      context.roundRect(wall.x, wall.y, wall.width, wall.height, 12);
-      context.fill();
-    });
+    fillRoundedRects(context, walls, 12);
 
     context.fillStyle = "#111111";
     context.beginPath();

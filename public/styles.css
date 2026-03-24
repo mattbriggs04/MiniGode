@@ -357,15 +357,73 @@ textarea:focus-visible {
 
 .landing-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 0.95fr) repeat(3, minmax(240px, 0.82fr));
+  grid-template-columns: minmax(300px, 0.88fr) minmax(360px, 1.12fr);
   gap: 20px;
   align-items: start;
 }
 
-.intro-panel {
+.intro-panel,
+.entry-panel {
   display: grid;
   gap: 18px;
   min-width: 0;
+}
+
+.entry-panel__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.entry-panel__notice {
+  margin: 0;
+}
+
+.landing-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 20px;
+  background: rgba(19, 39, 30, 0.06);
+  border: 1px solid rgba(19, 39, 30, 0.08);
+}
+
+.landing-tab-button {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.landing-tab-button:hover {
+  transform: translateY(-1px);
+  color: var(--text);
+}
+
+.landing-tab-button.is-active {
+  background: rgba(255, 107, 74, 0.12);
+  border-color: rgba(255, 107, 74, 0.24);
+  color: var(--text);
+  box-shadow: 0 10px 20px rgba(5, 11, 8, 0.04);
+}
+
+.landing-tab-panel {
+  min-width: 0;
+}
+
+.entry-form {
+  display: grid;
+  gap: 0;
 }
 
 .intro-actions {
@@ -1975,6 +2033,7 @@ body.theme-dark .shot-controls input[type="range"] {
   .waiting-header,
   .waiting-actions,
   .waiting-footer,
+  .entry-panel__header,
   .problem-header,
   .golf-stage-header,
   .terminal-case__header,

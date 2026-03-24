@@ -40,6 +40,7 @@ const state = {
   me: null,
   practiceSession: null,
   session: loadStoredSession(),
+  landingTab: "create",
   createCourseOrder: [],
   soloCourseOrder: [],
   codeDraft: "",
@@ -81,6 +82,11 @@ const MIN_EDITOR_PANE_WIDTH = 420;
 const MIN_EDITOR_TOP_HEIGHT = 260;
 const MIN_EDITOR_TERMINAL_HEIGHT = 220;
 const ROOM_TIMER_TICK_MS = 1000;
+const LANDING_TABS = [
+  { id: "create", label: "Create room" },
+  { id: "solo", label: "Solo" },
+  { id: "join", label: "Join" }
+];
 
 function migrateEditorLayoutStorage() {
   const version = loadStorage(EDITOR_LAYOUT_VERSION_KEY);
@@ -509,6 +515,133 @@ window.setInterval(() => {
   updateLiveTimerLabels();
 }, ROOM_TIMER_TICK_MS);
 
+function landingTabButtonMarkup(tab) {
+  return `
+    <button
+      id="landing-tab-${tab.id}"
+      type="button"
+      class="landing-tab-button"
+      role="tab"
+      aria-controls="landing-panel-${tab.id}"
+      data-landing-tab="${tab.id}"
+    >
+      ${escapeHtml(tab.label)}
+    </button>
+  `;
+}
+
+function roomSetupFieldsMarkup(prefix, { includeTimeLimit = false, advancedDescription }) {
+  return `
+    <label>
+      Difficulty mode
+      <select id="${prefix}-difficulty-mode" name="difficultyMode"></select>
+    </label>
+    <div id="${prefix}-fixed-difficulty-field">
+      <label>
+        Difficulty
+        <select id="${prefix}-difficulty" name="difficulty"></select>
+      </label>
+    </div>
+    <label>
+      Question bank
+      <select id="${prefix}-question-source" name="questionSource"></select>
+    </label>
+    <label>
+      Number of courses
+      <select id="${prefix}-course-count" name="courseCount"></select>
+    </label>
+    <details id="${prefix}-advanced-settings" class="advanced-settings">
+      <summary>Advanced settings</summary>
+      <div class="advanced-settings__body">
+        <p class="muted">${escapeHtml(advancedDescription)}</p>
+        <div id="${prefix}-course-order-fields" class="course-order-fields"></div>
+      </div>
+    </details>
+    ${
+      includeTimeLimit
+        ? `
+          <label>
+            Time limit
+            <select id="${prefix}-time-limit" name="timeLimitMinutes"></select>
+          </label>
+        `
+        : ""
+    }
+  `;
+}
+
+function createRoomFormMarkup() {
+  return `
+    <form id="create-form" class="entry-form">
+      <p class="panel-kicker">Create room</p>
+      <h2>Open a lobby</h2>
+      <p class="muted">Pick the rules, share the code, and start when everyone is in.</p>
+      <label>
+        Your name
+        <input name="name" maxlength="24" placeholder="username" required>
+      </label>
+      ${roomSetupFieldsMarkup("create", {
+        includeTimeLimit: true,
+        advancedDescription: "Choose the exact courses and order. Leave this closed to randomize without replacement."
+      })}
+      <button type="submit" class="primary">Create room</button>
+    </form>
+  `;
+}
+
+function soloFormMarkup() {
+  return `
+    <form id="solo-form" class="entry-form solo-form">
+      <p class="panel-kicker">Solo mode</p>
+      <h2>Play on your own</h2>
+      <p class="muted">Start a private one-player room or jump straight into local practice.</p>
+      <label>
+        Your name
+        <input id="solo-name-input" name="name" maxlength="24" value="Solo" required>
+      </label>
+      <label>
+        Mode
+        <select id="solo-mode" name="mode">
+          <option value="code-golf">Code + golf</option>
+          <option value="golf-practice">Golf practice</option>
+        </select>
+      </label>
+      <div id="solo-code-settings" class="solo-form__code-settings">
+        ${roomSetupFieldsMarkup("solo", {
+          advancedDescription: "Choose the exact solo course order. Leave this closed to randomize without replacement."
+        })}
+      </div>
+      <div id="solo-practice-course-field">
+        <label>
+          Course
+          <select id="solo-course" name="courseId"></select>
+        </label>
+      </div>
+      <p id="solo-mode-note" class="muted solo-form__mode-note"></p>
+      <button type="submit" class="primary">Play solo</button>
+    </form>
+  `;
+}
+
+function joinRoomFormMarkup() {
+  return `
+    <form id="join-form" class="entry-form">
+      <p class="panel-kicker">Join room</p>
+      <h2>Enter a room key</h2>
+      <p class="muted">Drop into an existing lobby with your name and the room code.</p>
+      <label>
+        Your name
+        <input name="name" maxlength="24" placeholder="username" required>
+      </label>
+      <label>
+        Room key
+        <input name="roomCode" maxlength="6" placeholder="AB12CD" required>
+      </label>
+      <button type="submit" class="primary">Join room</button>
+    </form>
+  `;
+}
+
 function createShell() {
   const root = document.getElementById("app");
   root.innerHTML = `
@@ -518,18 +651,19 @@ function createShell() {
       <header class="hero">
         <p class="eyebrow">Mini Golf + Code = MiniGode</p>
         <h1>MiniGode</h1>
-        <p class="hero-copy">Create a room, wait for everyone to join, then solve Python interview problems to earn swings on the course.</p>
+        <p class="hero-copy">Solve Python problems to earn swings, then race the course.</p>
       </header>
 
       <main>
         <section id="landing-view" class="landing-layout">
           <section class="panel intro-panel">
             <p class="panel-kicker">Game flow</p>
-            <h2>Start together, then race the hole</h2>
+            <h2>Answer first. Swing second.</h2>
+            <p class="muted">Rooms stay in sync on the coding side and the golf side, so the race stays about decisions instead of setup friction.</p>
             <div class="intro-steps">
               <article>
-                <strong>Create or join a room</strong>
-                <p>Every room opens on a waiting screen until the host starts the match.</p>
+                <strong>Open or join a lobby</strong>
+                <p>Everyone lands in the same waiting room until the host starts the round.</p>
               </article>
               <article>
                 <strong>Solve Python questions</strong>
@@ -537,8 +671,8 @@ function createShell() {
                 <p id="landing-credit-rules" class="muted">Difficulty-based swing payouts.</p>
               </article>
               <article>
-                <strong>Switch to the course</strong>
-                <p>1 credit = 1 swing. Try to finish the hole first!</p>
+                <strong>Spend swings on the course</strong>
+                <p>1 credit = 1 swing. Bank shots, clear hazards, and finish before the room does.</p>
               </article>
             </div>
             <div class="intro-actions">
@@ -546,111 +680,53 @@ function createShell() {
             </div>
           </section>
 
-          <form id="create-form" class="panel">
-            <p class="panel-kicker">Create room</p>
-            <h2>Open a lobby</h2>
-            <label>
-              Your name
-              <input name="name" maxlength="24" placeholder="username" required>
-            </label>
-            <label>
-              Difficulty mode
-              <select id="create-difficulty-mode" name="difficultyMode"></select>
-            </label>
-            <div id="create-fixed-difficulty-field">
-              <label>
-                Difficulty
-                <select id="create-difficulty" name="difficulty"></select>
-              </label>
-            </div>
-            <label>
-              Question bank
-              <select id="create-question-source" name="questionSource"></select>
-            </label>
-            <label>
-              Number of courses
-              <select id="create-course-count" name="courseCount"></select>
-            </label>
-            <details id="create-advanced-settings" class="advanced-settings">
-              <summary>Advanced settings</summary>
-              <div class="advanced-settings__body">
-                <p class="muted">Choose the exact courses and order. Leave this closed to randomize without replacement.</p>
-                <div id="create-course-order-fields" class="course-order-fields"></div>
+          <section class="panel entry-panel">
+            <div class="entry-panel__header">
+              <div>
+                <p class="panel-kicker">Play</p>
+                <h2>Open, practice, or join</h2>
+                <p class="muted">All entry paths live in one place now, so the home screen stays focused.</p>
               </div>
-            </details>
-            <label>
-              Time limit
-              <select id="create-time-limit" name="timeLimitMinutes"></select>
-            </label>
-            <button type="submit" class="primary">Create room</button>
-          </form>
-
-          <form id="solo-form" class="panel solo-form">
-            <p class="panel-kicker">Solo mode</p>
-            <h2>Play on your own</h2>
-            <label>
-              Your name
-              <input id="solo-name-input" name="name" maxlength="24" value="Solo" required>
-            </label>
-            <label>
-              Mode
-              <select id="solo-mode" name="mode">
-                <option value="code-golf">Code + golf</option>
-                <option value="golf-practice">Golf practice</option>
-              </select>
-            </label>
-            <div id="solo-code-settings" class="solo-form__code-settings">
-              <label>
-                Difficulty mode
-                <select id="solo-difficulty-mode" name="difficultyMode"></select>
-              </label>
-              <div id="solo-fixed-difficulty-field">
-                <label>
-                  Difficulty
-                  <select id="solo-difficulty" name="difficulty"></select>
-                </label>
-              </div>
-              <label>
-                Question bank
-                <select id="solo-question-source" name="questionSource"></select>
-              </label>
-              <label>
-                Number of courses
-                <select id="solo-course-count" name="courseCount"></select>
-              </label>
-              <details id="solo-advanced-settings" class="advanced-settings">
-                <summary>Advanced settings</summary>
-                <div class="advanced-settings__body">
-                  <p class="muted">Choose the exact solo course order. Leave this closed to randomize without replacement.</p>
-                  <div id="solo-course-order-fields" class="course-order-fields"></div>
-                </div>
-              </details>
             </div>
-            <div id="solo-practice-course-field">
-              <label>
-                Course
-                <select id="solo-course" name="courseId"></select>
-              </label>
-            </div>
-            <p id="solo-mode-note" class="muted solo-form__mode-note"></p>
-            <button type="submit" class="primary">Play solo</button>
-            <div id="solo-notice" class="inline-notice" hidden></div>
-          </form>
 
-          <form id="join-form" class="panel">
-            <p class="panel-kicker">Join room</p>
-            <h2>Enter a room key</h2>
-            <label>
-              Your name
-              <input name="name" maxlength="24" placeholder="username" required>
-            </label>
-            <label>
-              Room key
-              <input name="roomCode" maxlength="6" placeholder="AB12CD" required>
-            </label>
-            <button type="submit" class="primary">Join room</button>
-            <div id="landing-notice" class="inline-notice" hidden></div>
-          </form>
+            <div id="landing-tab-list" class="landing-tabs" role="tablist" aria-label="Play modes">
+              ${LANDING_TABS.map(landingTabButtonMarkup).join("")}
+            </div>
+
+            <div id="landing-notice" class="inline-notice entry-panel__notice" hidden></div>
+
+            <section
+              id="landing-panel-create"
+              class="landing-tab-panel"
+              role="tabpanel"
+              aria-labelledby="landing-tab-create"
+              data-landing-tab-panel="create"
+            >
+              ${createRoomFormMarkup()}
+            </section>
+
+            <section
+              id="landing-panel-solo"
+              class="landing-tab-panel"
+              role="tabpanel"
+              aria-labelledby="landing-tab-solo"
+              data-landing-tab-panel="solo"
+              hidden
+            >
+              ${soloFormMarkup()}
+            </section>
+
+            <section
+              id="landing-panel-join"
+              class="landing-tab-panel"
+              role="tabpanel"
+              aria-labelledby="landing-tab-join"
+              data-landing-tab-panel="join"
+              hidden
+            >
+              ${joinRoomFormMarkup()}
+            </section>
+          </section>
         </section>
 
         <section id="room-stage" class="room-stage" hidden>
@@ -796,6 +872,9 @@ function createShell() {
     hero: root.querySelector(".hero"),
     landingView: document.getElementById("landing-view"),
     landingCreditRules: document.getElementById("landing-credit-rules"),
+    landingTabList: document.getElementById("landing-tab-list"),
+    landingTabButtons: Array.from(root.querySelectorAll("[data-landing-tab]")),
+    landingTabPanels: Array.from(root.querySelectorAll("[data-landing-tab-panel]")),
     roomStage: document.getElementById("room-stage"),
     createForm: document.getElementById("create-form"),
     soloForm: document.getElementById("solo-form"),
@@ -821,7 +900,6 @@ function createShell() {
     soloCourse: document.getElementById("solo-course"),
     soloCodeSettings: document.getElementById("solo-code-settings"),
     soloModeNote: document.getElementById("solo-mode-note"),
-    soloNotice: document.getElementById("solo-notice"),
     landingNotice: document.getElementById("landing-notice"),
     waitingView: document.getElementById("waiting-view"),
     waitingRoomCode: document.getElementById("waiting-room-code"),
@@ -874,6 +952,7 @@ function createShell() {
   renderer = new CourseRenderer(elements.courseCanvas);
   applyColorMode();
 
+  elements.landingTabList.addEventListener("click", onLandingTabClick);
   elements.createForm.addEventListener("submit", onCreateRoom);
   elements.soloForm.addEventListener("submit", onStartSolo);
   elements.createDifficultyMode.addEventListener("change", syncCreateFormMode);
@@ -910,6 +989,7 @@ function createShell() {
 
   applyChallengeLayout();
   applyEditorLayout();
+  syncLandingTabs();
 }
 
 function initializeEditor() {
@@ -961,15 +1041,50 @@ function getCurrentQuestionKey(me = state.me) {
   return `${me.activeDifficulty ?? me.currentQuestion.difficulty}:${me.currentQuestionAssignment}:${me.currentQuestion.id}`;
 }
 
-function setNotice(message, target = elements.landingNotice) {
-  state.notice = message;
-  const noticeTargets = [elements.landingNotice, elements.soloNotice].filter(Boolean);
+function syncLandingTabs() {
+  if (!elements?.landingTabButtons?.length) {
+    return;
+  }
 
-  noticeTargets.forEach((element) => {
-    const isTarget = element === target && Boolean(message);
-    element.hidden = !isTarget;
-    element.textContent = isTarget ? message ?? "" : "";
+  elements.landingTabButtons.forEach((button) => {
+    const active = button.dataset.landingTab === state.landingTab;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+    button.tabIndex = active ? 0 : -1;
   });
+
+  elements.landingTabPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.landingTabPanel !== state.landingTab;
+  });
+}
+
+function setLandingTab(tabId) {
+  if (!LANDING_TABS.some((tab) => tab.id === tabId)) {
+    return;
+  }
+
+  state.landingTab = tabId;
+  syncLandingTabs();
+}
+
+function onLandingTabClick(event) {
+  const button = event.target.closest("[data-landing-tab]");
+  if (!button) {
+    return;
+  }
+
+  setLandingTab(button.dataset.landingTab);
+  clearNotice();
+}
+
+function setNotice(message) {
+  state.notice = message;
+  if (!elements?.landingNotice) {
+    return;
+  }
+
+  elements.landingNotice.hidden = !message;
+  elements.landingNotice.textContent = message ?? "";
 }
 
 function clearNotice() {
@@ -2367,6 +2482,7 @@ function renderViews() {
   renderGameTimerHud();
 
   if (stage === "home") {
+    syncLandingTabs();
     return;
   }
 
@@ -2423,10 +2539,11 @@ function startPracticeSession(courseId, name) {
 function leavePractice({ notice = null } = {}) {
   state.practiceSession = null;
   resetSharedGameState();
+  setLandingTab("solo");
   renderViews();
 
   if (notice) {
-    setNotice(notice, elements.soloNotice);
+    setNotice(notice);
   } else {
     clearNotice();
   }
@@ -2463,7 +2580,7 @@ async function onStartSolo(event) {
     try {
       startPracticeSession(payload.courseId, payload.name);
     } catch (error) {
-      setNotice(error.message, elements.soloNotice);
+      setNotice(error.message);
     }
     return;
   }
@@ -2498,7 +2615,7 @@ async function onStartSolo(event) {
       saveStorage(SESSION_KEY, null);
       state.session = null;
     }
-    setNotice(error.message, elements.soloNotice);
+    setNotice(error.message);
   } finally {
     state.busy = false;
     submitButton.disabled = false;

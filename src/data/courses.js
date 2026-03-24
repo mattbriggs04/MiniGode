@@ -211,6 +211,10 @@ function cloneRectangle(rect) {
   };
 }
 
+function cloneRectangles(rectangles = []) {
+  return rectangles.map(cloneRectangle);
+}
+
 function cloneCourse(course) {
   return {
     id: course.id,
@@ -227,9 +231,10 @@ function cloneCourse(course) {
       y: course.hole.y,
       radius: course.hole.radius
     },
-    walls: course.walls.map(cloneRectangle),
-    sandTraps: course.sandTraps.map(cloneRectangle),
-    accents: course.accents.map(cloneRectangle)
+    walls: cloneRectangles(course.walls),
+    sandTraps: cloneRectangles(course.sandTraps),
+    waterHazards: cloneRectangles(course.waterHazards ?? course.water),
+    accents: cloneRectangles(course.accents)
   };
 }
 

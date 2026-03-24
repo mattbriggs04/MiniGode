@@ -24,6 +24,18 @@ function isInsideRect(point, rect) {
   );
 }
 
+function getCourseRects(course, fieldName, legacyFieldName = null) {
+  if (Array.isArray(course?.[fieldName])) {
+    return course[fieldName];
+  }
+
+  if (legacyFieldName && Array.isArray(course?.[legacyFieldName])) {
+    return course[legacyFieldName];
+  }
+
+  return [];
+}
+
 function resolveBoundaryCollision(state, course) {
   if (state.x - BALL_RADIUS < 0) {
     state.x = BALL_RADIUS;
@@ -139,6 +151,9 @@ export function getProgressPercent(course, ball) {
 
 export function simulateSwing({ course, ball, angle, power }) {
   const boundedPower = clamp(Number(power) || 0, 0.05, 1);
+  const walls = getCourseRects(course, "walls");
+  const sandTraps = getCourseRects(course, "sandTraps");
+  const waterHazards = getCourseRects(course, "waterHazards", "water");
   const state = {
     x: ball.x,
     y: ball.y,
@@ -153,14 +168,29 @@ export function simulateSwing({ course, ball, angle, power }) {
     state.y += state.vy * TIME_STEP;
 
     resolveBoundaryCollision(state, course);
-    course.walls.forEach((wall) => resolveRectCollision(state, wall));
+    walls.forEach((wall) => resolveRectCollision(state, wall));
 
     if (maybeSinkBall(state, course)) {
       path.push({ x: state.x, y: state.y });
       break;
     }
 
-    const friction = course.sandTraps.some((trap) => isInsideRect(state, trap))
+    if (waterHazards.some((hazard) => isInsideRect(state, hazard))) {
+      path.push({ x: Number(state.x.toFixed(2)), y: Number(state.y.toFixed(2)) });
+      path.push({ x: Number(ball.x.toFixed(2)), y: Number(ball.y.toFixed(2)) });
+
+      return {
+        path,
+        ball: {
+          x: Number(ball.x.toFixed(2)),
+          y: Number(ball.y.toFixed(2)),
+          sunk: false
+        },
+        hazard: "water"
+      };
+    }
+
+    const friction = sandTraps.some((trap) => isInsideRect(state, trap))
       ? SAND_FRICTION
       : BASE_FRICTION;
 
@@ -182,6 +212,7 @@ export function simulateSwing({ course, ball, angle, power }) {
       x: Number(state.x.toFixed(2)),
       y: Number(state.y.toFixed(2)),
       sunk: state.sunk
-    }
+    },
+    hazard: null
   };
 }

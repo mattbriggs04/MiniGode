@@ -16,11 +16,12 @@ const GRID_MAJOR_STEP = GRID_SNAP_STEP * 5;
 const DEFAULT_HOLE_RADIUS = 18;
 const MIN_HOLE_RADIUS = 10;
 const MAX_HOLE_RADIUS = 60;
-const SELECTABLE_RECT_TYPES = ["walls", "sandTraps", "accents"];
+const SELECTABLE_RECT_TYPES = ["walls", "sandTraps", "waterHazards", "accents"];
 const TOOL_DEFINITIONS = [
   { id: "select", label: "Select", shortcut: "V", description: "Select and move existing objects." },
   { id: "wall", label: "Wall", shortcut: "W", description: "Drag to create a collision wall rectangle." },
   { id: "sand", label: "Sand", shortcut: "S", description: "Drag to create a sand trap rectangle." },
+  { id: "water", label: "Water", shortcut: "R", description: "Drag to create a water hazard that resets the ball." },
   { id: "accent", label: "Accent", shortcut: "A", description: "Drag to create a decorative accent rectangle." },
   { id: "tee", label: "Tee", shortcut: "T", description: "Click to place the tee location." },
   { id: "hole", label: "Hole", shortcut: "H", description: "Click to place the hole center." }
@@ -29,12 +30,20 @@ const TOOL_SHORTCUTS = new Map(TOOL_DEFINITIONS.map((tool) => [tool.shortcut.toL
 const RECT_TOOL_TO_FIELD = {
   wall: "walls",
   sand: "sandTraps",
+  water: "waterHazards",
   accent: "accents"
 };
 const RECT_FIELD_LABELS = {
   walls: "Wall",
   sandTraps: "Sand trap",
+  waterHazards: "Water",
   accents: "Accent"
+};
+const RECT_FIELD_PREVIEW_COLORS = {
+  walls: "rgba(255, 107, 74, 0.95)",
+  sandTraps: "rgba(255, 214, 102, 0.95)",
+  waterHazards: "rgba(73, 171, 234, 0.95)",
+  accents: "rgba(96, 255, 178, 0.95)"
 };
 
 const state = {
@@ -116,6 +125,7 @@ function createBlankCourse() {
     hole: { x: 838, y: 270, radius: DEFAULT_HOLE_RADIUS },
     walls: [],
     sandTraps: [],
+    waterHazards: [],
     accents: []
   });
 }
@@ -183,6 +193,9 @@ function normalizeCourse(rawCourse) {
       : [],
     sandTraps: Array.isArray(rawCourse?.sandTraps)
       ? rawCourse.sandTraps.map((rect) => normalizeRect(rect, width, height)).filter(Boolean)
+      : [],
+    waterHazards: Array.isArray(rawCourse?.waterHazards ?? rawCourse?.water)
+      ? (rawCourse.waterHazards ?? rawCourse.water).map((rect) => normalizeRect(rect, width, height)).filter(Boolean)
       : [],
     accents: Array.isArray(rawCourse?.accents)
       ? rawCourse.accents.map((rect) => normalizeRect(rect, width, height)).filter(Boolean)
@@ -533,8 +546,8 @@ function renderSelectionPanel() {
   if (!entity || !state.selectedTarget) {
     elements.selectionPanel.innerHTML = `
       <p class="course-editor-selection__empty">
-        Select an existing item on the canvas, or choose a drawing tool to add a new wall, sand trap, accent, tee,
-        or hole.
+        Select an existing item on the canvas, or choose a drawing tool to add a wall, sand trap, water hazard,
+        accent, tee, or hole.
       </p>
     `;
     return;
@@ -697,12 +710,7 @@ function drawSelectionOverlay() {
     );
 
     if (preview) {
-      const color =
-        state.interaction.fieldName === "walls"
-          ? "rgba(255, 107, 74, 0.95)"
-          : state.interaction.fieldName === "sandTraps"
-            ? "rgba(255, 214, 102, 0.95)"
-            : "rgba(96, 255, 178, 0.95)";
+      const color = RECT_FIELD_PREVIEW_COLORS[state.interaction.fieldName] ?? RECT_FIELD_PREVIEW_COLORS.accents;
 
       context.setLineDash([12, 8]);
       context.strokeStyle = color;

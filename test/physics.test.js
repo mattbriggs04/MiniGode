@@ -32,6 +32,31 @@ test("simulateSwing moves the ball forward", () => {
   assert.ok(result.path.length > 2);
 });
 
+test("simulateSwing resets the ball to the previous lie after entering water", () => {
+  const course = {
+    width: 420,
+    height: 220,
+    tee: { x: 72, y: 110 },
+    hole: { x: 362, y: 110, radius: 18 },
+    walls: [],
+    sandTraps: [],
+    waterHazards: [{ x: 164, y: 56, width: 74, height: 108 }],
+    accents: []
+  };
+  const ball = createSpawnBall(course);
+  const result = simulateSwing({
+    course,
+    ball,
+    angle: 0,
+    power: 0.52
+  });
+
+  assert.equal(result.hazard, "water");
+  assert.deepEqual(result.ball, ball);
+  assert.deepEqual(result.path.at(-1), { x: ball.x, y: ball.y });
+  assert.ok(result.path.length >= 3);
+});
+
 test("progress increases when the ball moves closer to the hole", () => {
   const course = getCourseById("sunset-switchbacks");
   const startingBall = createSpawnBall(course);

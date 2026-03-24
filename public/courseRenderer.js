@@ -142,36 +142,8 @@ export class CourseRenderer {
     context.fillStyle = "rgba(255, 255, 255, 0.08)";
     fillRoundedRects(context, accents, 22);
 
-    waterHazards.forEach((hazard) => {
-      const waterFill = context.createLinearGradient(hazard.x, hazard.y, hazard.x + hazard.width, hazard.y + hazard.height);
-      waterFill.addColorStop(0, "rgba(73, 171, 234, 0.88)");
-      waterFill.addColorStop(1, "rgba(28, 101, 177, 0.9)");
-      context.fillStyle = waterFill;
-      context.beginPath();
-      context.roundRect(hazard.x, hazard.y, hazard.width, hazard.height, 28);
-      context.fill();
-
-      context.strokeStyle = "rgba(225, 248, 255, 0.34)";
-      context.lineWidth = 3;
-      context.beginPath();
-      context.roundRect(hazard.x + 1.5, hazard.y + 1.5, hazard.width - 3, hazard.height - 3, 26);
-      context.stroke();
-
-      const rippleSpacing = Math.max(18, Math.min(hazard.height / 2.4, 28));
-      context.strokeStyle = "rgba(241, 251, 255, 0.22)";
-      context.lineWidth = 2;
-      for (let offset = rippleSpacing; offset < hazard.height; offset += rippleSpacing) {
-        context.beginPath();
-        context.moveTo(hazard.x + 18, hazard.y + offset);
-        context.quadraticCurveTo(
-          hazard.x + hazard.width / 2,
-          hazard.y + offset - 8,
-          hazard.x + hazard.width - 18,
-          hazard.y + offset
-        );
-        context.stroke();
-      }
-    });
+    context.fillStyle = "#2e82d1";
+    fillRoundedRects(context, waterHazards, 28);
 
     context.fillStyle = "#d7b267";
     fillRoundedRects(context, sandTraps, 28);

@@ -10,7 +10,7 @@ const MIN_COURSE_HEIGHT = 240;
 const MAX_COURSE_WIDTH = 2400;
 const MAX_COURSE_HEIGHT = 1800;
 const COURSE_DIMENSION_STEP = 10;
-const GRID_SNAP_STEP = 5;
+const GRID_SNAP_STEP = 10; // Adjust this to change the editor's snap/grid spacing.
 const COPY_BUTTON_FEEDBACK_MS = 1000;
 const GRID_MAJOR_STEP = GRID_SNAP_STEP * 5;
 const DEFAULT_HOLE_RADIUS = 18;
@@ -465,7 +465,7 @@ function renderToolPalette() {
 
 function renderGridToggle() {
   elements.gridToggleButton.classList.toggle("is-active", state.gridModeEnabled);
-  elements.gridToggleButton.textContent = state.gridModeEnabled ? `Grid ${GRID_SNAP_STEP} On` : `Grid ${GRID_SNAP_STEP} Off`;
+  elements.gridToggleButton.textContent = state.gridModeEnabled ? "Grid On" : "Grid Off";
   elements.gridToggleButton.setAttribute("aria-pressed", state.gridModeEnabled ? "true" : "false");
 }
 

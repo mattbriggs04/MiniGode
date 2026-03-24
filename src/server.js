@@ -13,6 +13,7 @@ import {
   getRoomState,
   joinRoom,
   postChatMessage,
+  setPlayerDifficulty,
   startRoom,
   subscribeToRoom,
   submitAnswer,
@@ -246,6 +247,19 @@ const server = http.createServer(async (request, response) => {
         roomCode,
         playerId: body.playerId,
         sessionId: body.sessionId
+      });
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (request.method === "POST" && /^\/api\/rooms\/[^/]+\/difficulty$/.test(url.pathname)) {
+      const roomCode = parseRoomCode(url.pathname);
+      const body = await readJsonBody(request);
+      const result = setPlayerDifficulty({
+        roomCode,
+        playerId: body.playerId,
+        sessionId: body.sessionId,
+        difficulty: body.difficulty
       });
       sendJson(response, 200, result);
       return;

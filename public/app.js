@@ -7,6 +7,7 @@ import {
   joinRoom,
   notifyDisconnect,
   postChatMessage,
+  setPlayerDifficulty as setPlayerDifficultyRequest,
   startRoom as startRoomRequest,
   submitSolution,
   takeSwing,
@@ -39,8 +40,11 @@ const state = {
   me: null,
   practiceSession: null,
   session: loadStoredSession(),
+  createCourseOrder: [],
+  soloCourseOrder: [],
   codeDraft: "",
-  activeQuestionAssignment: null,
+  questionDrafts: {},
+  activeQuestionKey: null,
   evaluation: null,
   notice: null,
   busy: false,
@@ -249,6 +253,176 @@ function formatDifficulty(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
 }
 
+function formatDifficultyMode(value) {
+  return value === "player-choice" ? "Player choice" : "Fixed difficulty";
+}
+
+function formatRoomDifficultySummary(room = state.room) {
+  if (!room) {
+    return "";
+  }
+
+  if (room.difficultyMode === "player-choice") {
+    return "Player-choice Python room";
+  }
+
+  return `${formatDifficulty(room.difficulty)} Python room`;
+}
+
+function getRoomDifficultySettingMarkup(room = state.room) {
+  if (!room) {
+    return "";
+  }
+
+  if (room.difficultyMode === "player-choice") {
+    return `<div class="setting-row"><span>Difficulty mode</span><strong>${formatDifficultyMode(room.difficultyMode)}</strong></div>`;
+  }
+
+  return `<div class="setting-row"><span>Difficulty</span><strong>${formatDifficulty(room.difficulty)}</strong></div>`;
+}
+
+function formatCourseCountLabel(count) {
+  const normalizedCount = Number(count) || 0;
+  return `${normalizedCount} course${normalizedCount === 1 ? "" : "s"}`;
+}
+
+function formatCourseOrder(room = state.room) {
+  if (!room?.courseOrder?.length) {
+    return "";
+  }
+
+  return room.courseOrder.map((course, index) => `${index + 1}. ${course.name}`).join(" -> ");
+}
+
+function getRoomCourseSettingMarkup(room = state.room, { includeCurrentCourse = false } = {}) {
+  if (!room) {
+    return "";
+  }
+
+  const parts = [];
+
+  if (includeCurrentCourse) {
+    parts.push(`<div class="setting-row"><span>Current course</span><strong>${escapeHtml(room.course.name)}</strong></div>`);
+  }
+
+  parts.push(`<div class="setting-row"><span>Courses</span><strong>${escapeHtml(formatCourseCountLabel(room.totalCourses ?? room.courseOrder?.length ?? 1))}</strong></div>`);
+
+  if (room.courseOrder?.length) {
+    parts.push(
+      `<div class="setting-row setting-row--stacked"><span>Order</span><strong>${escapeHtml(formatCourseOrder(room))}</strong></div>`
+    );
+  }
+
+  return parts.join("");
+}
+
+function getCourseCountValue(kind) {
+  return Number(kind === "create" ? elements.createCourseCount.value : elements.soloCourseCount.value);
+}
+
+function getCourseOrderStateKey(kind) {
+  return kind === "create" ? "createCourseOrder" : "soloCourseOrder";
+}
+
+function getCourseOrderContainer(kind) {
+  return kind === "create" ? elements.createCourseOrderFields : elements.soloCourseOrderFields;
+}
+
+function getAdvancedSettingsElement(kind) {
+  return kind === "create" ? elements.createAdvancedSettings : elements.soloAdvancedSettings;
+}
+
+function getSelectableCourseIds() {
+  return state.courseCatalog.map((course) => course.id);
+}
+
+function normalizeCourseOrderSelection(order, count) {
+  const availableIds = getSelectableCourseIds();
+  const normalizedOrder = [];
+
+  for (const courseId of order ?? []) {
+    if (normalizedOrder.length >= count) {
+      break;
+    }
+
+    if (!availableIds.includes(courseId) || normalizedOrder.includes(courseId)) {
+      continue;
+    }
+
+    normalizedOrder.push(courseId);
+  }
+
+  for (const courseId of availableIds) {
+    if (normalizedOrder.length >= count) {
+      break;
+    }
+
+    if (!normalizedOrder.includes(courseId)) {
+      normalizedOrder.push(courseId);
+    }
+  }
+
+  return normalizedOrder;
+}
+
+function syncCourseOrderFields(kind) {
+  const count = getCourseCountValue(kind);
+  const stateKey = getCourseOrderStateKey(kind);
+  const container = getCourseOrderContainer(kind);
+  if (!container || !count) {
+    return;
+  }
+
+  state[stateKey] = normalizeCourseOrderSelection(state[stateKey], count);
+  const selectedOrder = state[stateKey];
+
+  container.innerHTML = selectedOrder
+    .slice(0, count)
+    .map(
+      (courseId, index) => `
+        <label>
+          Course ${index + 1}
+          <select data-course-order-kind="${kind}" data-course-order-index="${index}">
+            ${state.courseCatalog
+              .map(
+                (course) =>
+                  `<option value="${course.id}"${course.id === courseId ? " selected" : ""}>${escapeHtml(course.name)}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+      `
+    )
+    .join("");
+
+  container.querySelectorAll("select").forEach((select) => {
+    select.addEventListener("change", (event) => {
+      const index = Number(event.target.dataset.courseOrderIndex);
+      state[stateKey][index] = event.target.value;
+    });
+  });
+}
+
+function getCustomCourseOrder(kind) {
+  const advancedSettings = getAdvancedSettingsElement(kind);
+  if (!advancedSettings?.open) {
+    return null;
+  }
+
+  const count = getCourseCountValue(kind);
+  const selectedOrder = (state[getCourseOrderStateKey(kind)] ?? []).slice(0, count);
+
+  if (selectedOrder.length !== count || selectedOrder.some((courseId) => !courseId)) {
+    throw new Error("Choose a course for each slot in the advanced course order.");
+  }
+
+  if (new Set(selectedOrder).size !== selectedOrder.length) {
+    throw new Error("Choose unique courses in the advanced course order.");
+  }
+
+  return selectedOrder;
+}
+
 function formatSwingCreditRules(rules = {}) {
   const orderedDifficulties = ["easy", "medium", "hard"];
   const parts = orderedDifficulties
@@ -380,17 +554,30 @@ function createShell() {
               <input name="name" maxlength="24" placeholder="username" required>
             </label>
             <label>
-              Difficulty
-              <select id="create-difficulty" name="difficulty"></select>
+              Difficulty mode
+              <select id="create-difficulty-mode" name="difficultyMode"></select>
             </label>
+            <div id="create-fixed-difficulty-field">
+              <label>
+                Difficulty
+                <select id="create-difficulty" name="difficulty"></select>
+              </label>
+            </div>
             <label>
               Question bank
               <select id="create-question-source" name="questionSource"></select>
             </label>
             <label>
-              Course
-              <select id="create-course" name="courseId"></select>
+              Number of courses
+              <select id="create-course-count" name="courseCount"></select>
             </label>
+            <details id="create-advanced-settings" class="advanced-settings">
+              <summary>Advanced settings</summary>
+              <div class="advanced-settings__body">
+                <p class="muted">Choose the exact courses and order. Leave this closed to randomize without replacement.</p>
+                <div id="create-course-order-fields" class="course-order-fields"></div>
+              </div>
+            </details>
             <label>
               Time limit
               <select id="create-time-limit" name="timeLimitMinutes"></select>
@@ -414,18 +601,37 @@ function createShell() {
             </label>
             <div id="solo-code-settings" class="solo-form__code-settings">
               <label>
-                Difficulty
-                <select id="solo-difficulty" name="difficulty"></select>
+                Difficulty mode
+                <select id="solo-difficulty-mode" name="difficultyMode"></select>
               </label>
+              <div id="solo-fixed-difficulty-field">
+                <label>
+                  Difficulty
+                  <select id="solo-difficulty" name="difficulty"></select>
+                </label>
+              </div>
               <label>
                 Question bank
                 <select id="solo-question-source" name="questionSource"></select>
               </label>
+              <label>
+                Number of courses
+                <select id="solo-course-count" name="courseCount"></select>
+              </label>
+              <details id="solo-advanced-settings" class="advanced-settings">
+                <summary>Advanced settings</summary>
+                <div class="advanced-settings__body">
+                  <p class="muted">Choose the exact solo course order. Leave this closed to randomize without replacement.</p>
+                  <div id="solo-course-order-fields" class="course-order-fields"></div>
+                </div>
+              </details>
             </div>
-            <label>
-              Course
-              <select id="solo-course" name="courseId"></select>
-            </label>
+            <div id="solo-practice-course-field">
+              <label>
+                Course
+                <select id="solo-course" name="courseId"></select>
+              </label>
+            </div>
             <p id="solo-mode-note" class="muted solo-form__mode-note"></p>
             <button type="submit" class="primary">Play solo</button>
             <div id="solo-notice" class="inline-notice" hidden></div>
@@ -594,14 +800,24 @@ function createShell() {
     createForm: document.getElementById("create-form"),
     soloForm: document.getElementById("solo-form"),
     joinForm: document.getElementById("join-form"),
+    createDifficultyMode: document.getElementById("create-difficulty-mode"),
+    createFixedDifficultyField: document.getElementById("create-fixed-difficulty-field"),
     createDifficulty: document.getElementById("create-difficulty"),
     createQuestionSource: document.getElementById("create-question-source"),
-    createCourse: document.getElementById("create-course"),
+    createCourseCount: document.getElementById("create-course-count"),
+    createAdvancedSettings: document.getElementById("create-advanced-settings"),
+    createCourseOrderFields: document.getElementById("create-course-order-fields"),
     createTimeLimit: document.getElementById("create-time-limit"),
     soloNameInput: document.getElementById("solo-name-input"),
     soloMode: document.getElementById("solo-mode"),
+    soloDifficultyMode: document.getElementById("solo-difficulty-mode"),
+    soloFixedDifficultyField: document.getElementById("solo-fixed-difficulty-field"),
     soloDifficulty: document.getElementById("solo-difficulty"),
     soloQuestionSource: document.getElementById("solo-question-source"),
+    soloCourseCount: document.getElementById("solo-course-count"),
+    soloAdvancedSettings: document.getElementById("solo-advanced-settings"),
+    soloCourseOrderFields: document.getElementById("solo-course-order-fields"),
+    soloPracticeCourseField: document.getElementById("solo-practice-course-field"),
     soloCourse: document.getElementById("solo-course"),
     soloCodeSettings: document.getElementById("solo-code-settings"),
     soloModeNote: document.getElementById("solo-mode-note"),
@@ -660,7 +876,11 @@ function createShell() {
 
   elements.createForm.addEventListener("submit", onCreateRoom);
   elements.soloForm.addEventListener("submit", onStartSolo);
+  elements.createDifficultyMode.addEventListener("change", syncCreateFormMode);
+  elements.createCourseCount.addEventListener("change", () => syncCourseOrderFields("create"));
   elements.soloMode.addEventListener("change", syncSoloFormMode);
+  elements.soloDifficultyMode.addEventListener("change", syncSoloFormMode);
+  elements.soloCourseCount.addEventListener("change", () => syncCourseOrderFields("solo"));
   elements.joinForm.addEventListener("submit", onJoinRoom);
   elements.startGameButton.addEventListener("click", onStartGame);
   elements.copyRoomButton.addEventListener("click", copyRoomCode);
@@ -697,6 +917,10 @@ function initializeEditor() {
     codeEditor.setSubmitHandler(() => onSubmitSolution("all"));
     codeEditor.setChangeHandler((value) => {
       state.codeDraft = value;
+      const questionKey = getCurrentQuestionKey();
+      if (questionKey) {
+        state.questionDrafts[questionKey] = value;
+      }
     });
     return codeEditor.ensureReady();
   }
@@ -705,6 +929,10 @@ function initializeEditor() {
     elementId: "code-editor",
     onChange(value) {
       state.codeDraft = value;
+      const questionKey = getCurrentQuestionKey();
+      if (questionKey) {
+        state.questionDrafts[questionKey] = value;
+      }
     },
     onSubmit: () => onSubmitSolution("all")
   });
@@ -725,6 +953,14 @@ function setEditorValue(value) {
   void codeEditor.setValue(nextValue);
 }
 
+function getCurrentQuestionKey(me = state.me) {
+  if (!me?.currentQuestion) {
+    return null;
+  }
+
+  return `${me.activeDifficulty ?? me.currentQuestion.difficulty}:${me.currentQuestionAssignment}:${me.currentQuestion.id}`;
+}
+
 function setNotice(message, target = elements.landingNotice) {
   state.notice = message;
   const noticeTargets = [elements.landingNotice, elements.soloNotice].filter(Boolean);
@@ -740,14 +976,30 @@ function clearNotice() {
   setNotice(null);
 }
 
+function syncCreateFormMode() {
+  const playerChoice = elements.createDifficultyMode.value === "player-choice";
+  elements.createFixedDifficultyField.hidden = playerChoice;
+  elements.createDifficulty.disabled = playerChoice;
+  syncCourseOrderFields("create");
+}
+
 function syncSoloFormMode() {
   const golfPractice = elements.soloMode.value === "golf-practice";
+  const playerChoice = elements.soloDifficultyMode.value === "player-choice";
   elements.soloCodeSettings.hidden = golfPractice;
-  elements.soloDifficulty.disabled = golfPractice;
+  elements.soloPracticeCourseField.hidden = !golfPractice;
+  elements.soloDifficultyMode.disabled = golfPractice;
+  elements.soloFixedDifficultyField.hidden = golfPractice || playerChoice;
+  elements.soloDifficulty.disabled = golfPractice || playerChoice;
   elements.soloQuestionSource.disabled = golfPractice;
+  elements.soloCourseCount.disabled = golfPractice;
+  elements.soloAdvancedSettings.hidden = golfPractice;
   elements.soloModeNote.textContent = golfPractice
     ? "Instant local practice with unlimited swings. No room, timer, or coding round."
     : "Creates a private one-player room and starts it immediately.";
+  if (!golfPractice) {
+    syncCourseOrderFields("solo");
+  }
 }
 
 function saveEditorTheme() {
@@ -808,19 +1060,20 @@ function connectEvents() {
 
 function syncQuestionDraft() {
   if (state.room?.status === "waiting") {
-    state.activeQuestionAssignment = null;
+    state.activeQuestionKey = null;
     state.evaluation = null;
     return;
   }
 
-  const questionAssignment = state.me?.currentQuestionAssignment;
-  if (!questionAssignment || !state.me?.currentQuestion) {
+  const questionKey = getCurrentQuestionKey();
+  if (!questionKey || !state.me?.currentQuestion) {
     return;
   }
 
-  if (questionAssignment !== state.activeQuestionAssignment) {
-    state.activeQuestionAssignment = questionAssignment;
-    state.codeDraft = state.me.currentQuestion.starterCode;
+  if (questionKey !== state.activeQuestionKey) {
+    state.activeQuestionKey = questionKey;
+    state.codeDraft = state.questionDrafts[questionKey] ?? state.me.currentQuestion.starterCode;
+    state.questionDrafts[questionKey] = state.codeDraft;
     state.evaluation = null;
     state.gameScreen = "challenge";
     setEditorValue(state.codeDraft);
@@ -1095,7 +1348,6 @@ function renderGameTimerHud() {
       (getCurrentStage() === "challenge" || getCurrentStage() === "golf")
   );
 
-  elements.gameShell.classList.toggle("game-shell--with-timer", visible);
   elements.gameTimerHud.hidden = !visible;
   if (!visible) {
     elements.gameTimerHud.innerHTML = "";
@@ -1104,7 +1356,6 @@ function renderGameTimerHud() {
 
   elements.gameTimerHud.innerHTML = `
     <section class="game-timer-pill" aria-live="polite">
-      <span class="game-timer-pill__label">Time left</span>
       <strong data-room-countdown>${escapeHtml(formatCountdownClock(getLiveRoomTimerMs() ?? 0))}</strong>
     </section>
   `;
@@ -1194,15 +1445,31 @@ function getCourseStatusCard() {
   const winner = leaders.length === 1 ? leaders[0] : null;
   const remainingPlayers = getRemainingPlayersCount();
   const opponentsStillPlaying = state.me.ball.sunk ? remainingPlayers : Math.max(remainingPlayers - 1, 0);
+  const totalCourses = state.room.totalCourses ?? 1;
+  const currentCourseNumber = state.room.currentCourseNumber ?? 1;
+  const hasMoreCourses = currentCourseNumber < totalCourses;
 
   if (state.room.players.length === 1) {
-    if (state.me.ball.sunk) {
+    if (state.room.status === "finished") {
       return {
         tone: "complete",
-        eyebrow: "Hole Complete",
-        title: "You finished the hole.",
-        body: `You cleared the course in ${state.me.strokes} stroke${state.me.strokes === 1 ? "" : "s"}.`,
+        eyebrow: totalCourses > 1 ? "Round Complete" : "Hole Complete",
+        title: totalCourses > 1 ? "You finished the round." : "You finished the hole.",
+        body:
+          totalCourses > 1
+            ? `You cleared all ${totalCourses} courses in ${state.me.strokes} stroke${state.me.strokes === 1 ? "" : "s"}.`
+            : `You cleared the course in ${state.me.strokes} stroke${state.me.strokes === 1 ? "" : "s"}.`,
         pill: "Complete"
+      };
+    }
+
+    if (state.me.ball.sunk && hasMoreCourses) {
+      return {
+        tone: "clubhouse",
+        eyebrow: "Course Complete",
+        title: "Next course loading.",
+        body: `Course ${currentCourseNumber} is done. The round will continue on course ${currentCourseNumber + 1} shortly.`,
+        pill: `${currentCourseNumber}/${totalCourses}`
       };
     }
 
@@ -1210,26 +1477,36 @@ function getCourseStatusCard() {
   }
 
   if (state.room.status === "finished") {
-    if (state.me.finishPlace === 1) {
+    if (totalCourses > 1) {
       return {
         tone: "complete",
         eyebrow: "Round Complete",
-        title: "You finished first.",
-        body: `The whole lobby is in the hole. Final standings are locked in at ${state.me.strokes} strokes.`,
-        pill: "Winner"
+        title: state.room.winnerId === state.me.id ? "You finished on top." : "The round is complete.",
+        body: `Everyone finished all ${totalCourses} courses. Final standings are based on total strokes, then solved questions.`,
+        pill: state.room.winnerId === state.me.id ? "Leader" : "Complete"
       };
     }
 
     return {
       tone: "complete",
       eyebrow: "Round Complete",
-      title: `You finished ${formatPlace(state.me.finishPlace ?? state.room.players.length)}.`,
+      title: state.me.finishPlace === 1 ? "You finished first." : `You finished ${formatPlace(state.me.finishPlace ?? state.room.players.length)}.`,
       body: "Everyone has finished the hole. Final standings are below.",
       pill: state.me.finishPlace ? formatPlace(state.me.finishPlace) : "Complete"
     };
   }
 
   if (state.me.ball.sunk) {
+    if (remainingPlayers === 0 && hasMoreCourses) {
+      return {
+        tone: "clubhouse",
+        eyebrow: "Course Complete",
+        title: "Next course loading.",
+        body: `Everyone finished course ${currentCourseNumber}. Course ${currentCourseNumber + 1} starts automatically.`,
+        pill: `${currentCourseNumber}/${totalCourses}`
+      };
+    }
+
     return {
       tone: "clubhouse",
       eyebrow: "In The Clubhouse",
@@ -1237,7 +1514,7 @@ function getCourseStatusCard() {
       body:
         remainingPlayers === 0
           ? "The rest of the room is catching up."
-          : `Watch ${remainingPlayers} remaining player${remainingPlayers === 1 ? "" : "s"} finish the hole from the course view.`,
+          : `Watch ${remainingPlayers} remaining player${remainingPlayers === 1 ? "" : "s"} finish course ${currentCourseNumber}.`,
       pill: state.me.finishPlace ? formatPlace(state.me.finishPlace) : "Finished"
     };
   }
@@ -1246,10 +1523,10 @@ function getCourseStatusCard() {
     return {
       tone: "race",
       eyebrow: "Race Update",
-      title: `${winner.name} finished first.`,
+      title: winner.finishPlace ? `${winner.name} finished first.` : `${winner.name} leads the round.`,
       body:
         opponentsStillPlaying === 0
-          ? "You are the last player still working the hole."
+          ? `You are the last player still working course ${currentCourseNumber}.`
           : `${opponentsStillPlaying} other player${opponentsStillPlaying === 1 ? "" : "s"} remain between you and the cup.`,
       pill: "Still playing"
     };
@@ -1279,14 +1556,19 @@ function courseStatusCardMarkup() {
 }
 
 function playerStandingMarkup(player, index) {
+  const roundComplete = player.holesCompleted === player.holesTotal && state.room?.status === "finished";
   const statusLabel = isTiedForLead(player)
     ? "Tied for 1st"
+    : roundComplete
+      ? "Round complete"
+      : player.finishPlace
+        ? `Finished ${formatPlace(player.finishPlace)}`
+        : `${player.distanceToHole} from the hole`;
+  const secondaryLabel = roundComplete
+    ? `${player.strokes} total stroke${player.strokes === 1 ? "" : "s"}`
     : player.finishPlace
-      ? `Finished ${formatPlace(player.finishPlace)}`
-      : `${player.distanceToHole} from the hole`;
-  const secondaryLabel = player.finishPlace
-    ? `${player.strokes} stroke${player.strokes === 1 ? "" : "s"}`
-    : `${player.strokes} stroke${player.strokes === 1 ? "" : "s"} • ${player.progressPercent}% progress`;
+      ? `${player.strokes} total stroke${player.strokes === 1 ? "" : "s"} • ${player.holesCompleted}/${player.holesTotal} courses`
+      : `${player.strokes} total stroke${player.strokes === 1 ? "" : "s"} • ${player.holesCompleted}/${player.holesTotal} courses`;
 
   return `
     <article class="standing-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
@@ -1355,7 +1637,7 @@ function getResultsSummary() {
         leader?.id === state.me.id
           ? "Time is up. You lead the final leaderboard."
           : `Time is up. ${leader?.name ?? "The room leader"} finished on top.`,
-      body: "Players are ranked by hole completion first, then progress toward the cup, then questions solved and strokes."
+      body: "Players are ranked by courses completed first, then current-course progress, then total strokes and solved questions."
     };
   }
 
@@ -1387,25 +1669,38 @@ function getResultsSummary() {
   }
 
   return {
-    eyebrow: "Hole Complete",
-    title: state.me.finishPlace === 1 ? "You won the hole." : `${leader?.name ?? "A player"} won the hole.`,
-    body: "Everyone finished the course. Final standings are locked in below."
+    eyebrow: state.room.totalCourses > 1 ? "Round Complete" : "Hole Complete",
+    title:
+      state.room.totalCourses > 1
+        ? leader?.id === state.me.id
+          ? "You won the round."
+          : `${leader?.name ?? "A player"} won the round.`
+        : state.me.finishPlace === 1
+          ? "You won the hole."
+          : `${leader?.name ?? "A player"} won the hole.`,
+    body:
+      state.room.totalCourses > 1
+        ? "Everyone finished all courses. Final standings are locked in below."
+        : "Everyone finished the course. Final standings are locked in below."
   };
 }
 
 function resultsRowMarkup(player, index) {
+  const roundComplete = player.holesCompleted === player.holesTotal && state.room?.status === "finished";
   const completionLabel = isTiedForLead(player)
     ? "Tied for 1st"
-    : player.ball.sunk
-      ? player.finishPlace
-        ? `Finished ${formatPlace(player.finishPlace)}`
-        : "Hole complete"
-      : state.room.status === "timed_out"
-        ? "Time expired"
-        : "Hole incomplete";
+    : roundComplete
+      ? "Round complete"
+      : player.ball.sunk
+        ? player.finishPlace
+          ? `Finished ${formatPlace(player.finishPlace)}`
+          : "Course complete"
+        : state.room.status === "timed_out"
+          ? "Time expired"
+          : `Course ${Math.min(player.holesCompleted + 1, player.holesTotal)} in progress`;
 
-  const distanceLabel = player.ball.sunk ? "In the cup" : `${player.distanceToHole} left`;
-  const resultsPill = isTiedForLead(player) ? "Tied lead" : player.ball.sunk ? "Completed" : "In progress";
+  const distanceLabel = roundComplete ? "All courses cleared" : player.ball.sunk ? "In the cup" : `${player.distanceToHole} left`;
+  const resultsPill = isTiedForLead(player) ? "Tied lead" : roundComplete ? "Completed" : "In progress";
 
   return `
     <article class="results-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
@@ -1463,8 +1758,8 @@ function renderResultsScreen() {
       </div>
 
       <div class="results-meta">
-        <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.room.course.name)}</strong></div>
-        <div class="setting-row"><span>Difficulty</span><strong>${formatDifficulty(state.room.difficulty)}</strong></div>
+        ${getRoomCourseSettingMarkup(state.room, { includeCurrentCourse: state.room.status !== "finished" })}
+        ${getRoomDifficultySettingMarkup(state.room)}
         <div class="setting-row"><span>Question bank</span><strong>${formatQuestionSource(state.room.questionSource)}</strong></div>
         <div class="setting-row"><span>Time limit</span><strong>${escapeHtml(timerLabel)}</strong></div>
         <div class="setting-row"><span>Room code</span><strong>${escapeHtml(state.room.code)}</strong></div>
@@ -1507,14 +1802,14 @@ function waitingPlayerMarkup(player) {
 
 function renderWaitingRoom() {
   elements.waitingRoomCode.textContent = state.room.code;
-  elements.waitingSubtitle.textContent = `${formatDifficulty(state.room.difficulty)} Python room • ${formatQuestionSource(state.room.questionSource)} • ${formatTimeLimitLabel(state.room.timer?.timeLimitMinutes)} • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
+  elements.waitingSubtitle.textContent = `${formatCourseCountLabel(state.room.totalCourses)} • ${formatRoomDifficultySummary(state.room)} • ${formatQuestionSource(state.room.questionSource)} • ${formatTimeLimitLabel(state.room.timer?.timeLimitMinutes)} • ${state.room.players.length} player${state.room.players.length === 1 ? "" : "s"}`;
   elements.waitingPlayerList.innerHTML = state.room.players.map(waitingPlayerMarkup).join("");
   elements.copyRoomButton.textContent = state.copyRoomLabel ?? "Copy room key";
   elements.waitingSettings.innerHTML = `
-    <div class="setting-row"><span>Difficulty</span><strong>${formatDifficulty(state.room.difficulty)}</strong></div>
+    ${getRoomCourseSettingMarkup(state.room)}
+    ${getRoomDifficultySettingMarkup(state.room)}
     <div class="setting-row"><span>Question bank</span><strong>${formatQuestionSource(state.room.questionSource)}</strong></div>
     <div class="setting-row"><span>Language</span><strong>${escapeHtml(state.room.questionLanguage)}</strong></div>
-    <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.room.course.name)}</strong></div>
     <div class="setting-row"><span>Time limit</span><strong>${escapeHtml(formatTimeLimitLabel(state.room.timer?.timeLimitMinutes))}</strong></div>
   `;
 
@@ -1692,6 +1987,10 @@ function renderEditorTerminal() {
 
 function renderProblemPanel() {
   const question = state.me.currentQuestion;
+  const swingPayout = state.bootstrap?.swingCreditsByDifficulty?.[question.difficulty];
+  const difficultySelectDisabled =
+    state.busy || state.me.ball.sunk || isRoomOver(state.room?.status);
+
   elements.problemPanel.innerHTML = `
     <div class="problem-header">
       <div>
@@ -1705,7 +2004,33 @@ function renderProblemPanel() {
     <section class="problem-section">
       <div class="problem-meta">
         <span class="difficulty-pill difficulty-pill--${escapeHtml(question.difficulty)}">${formatDifficulty(question.difficulty)}</span>
+        ${
+          Number.isInteger(swingPayout)
+            ? `<span class="difficulty-payout">${escapeHtml(`${swingPayout} swing credit${swingPayout === 1 ? "" : "s"}`)}</span>`
+            : ""
+        }
       </div>
+      ${
+        state.room.difficultyMode === "player-choice"
+          ? `
+            <div class="problem-difficulty-picker">
+              <label for="problem-difficulty-select">Working difficulty</label>
+              <select id="problem-difficulty-select"${difficultySelectDisabled ? " disabled" : ""}>
+                ${state.bootstrap.difficulties
+                  .map(
+                    (difficulty) => `
+                      <option value="${difficulty}"${difficulty === state.me.activeDifficulty ? " selected" : ""}>
+                        ${formatDifficulty(difficulty)}
+                      </option>
+                    `
+                  )
+                  .join("")}
+              </select>
+              <p class="muted">Each difficulty keeps its own shared room sequence. Switching returns you to your current question at that difficulty.</p>
+            </div>
+          `
+          : ""
+      }
     </section>
 
     <section class="problem-section">
@@ -1750,17 +2075,24 @@ function renderProblemPanel() {
       </ul>
     </section>
   `;
+
+  document.getElementById("problem-difficulty-select")?.addEventListener("change", onProblemDifficultyChange);
 }
 
 function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
   const spectatorMode = state.me.ball.sunk || isRoomOver();
+  const nextQuestionLabel =
+    state.room?.difficultyMode === "player-choice"
+      ? `Next ${formatDifficulty(state.me.activeDifficulty)} question`
+      : "Next question";
   elements.editorThemeSelect.value = theme.id;
   elements.resetCodeButton.disabled = spectatorMode || state.busy || !state.editorReady;
   elements.runSampleTestsButton.disabled = spectatorMode || state.busy || !state.editorReady;
   elements.runTestsButton.disabled = spectatorMode || state.busy || !state.editorReady;
   elements.nextQuestionButton.hidden = spectatorMode || !state.me.awaitingNextQuestion;
   elements.nextQuestionButton.disabled = state.busy;
+  elements.nextQuestionButton.querySelector("span").textContent = nextQuestionLabel;
   elements.problemToGolfButton.disabled = state.busy;
   applyChallengeLayout();
   applyEditorLayout();
@@ -1899,7 +2231,7 @@ function renderGolfControls() {
     <h2>Take your swing</h2>
     <div class="shot-summary">
       <span>${formatCredits(state.me.swingCredits)}</span>
-      <span>${state.me.strokes} stroke${state.me.strokes === 1 ? "" : "s"}</span>
+      <span>Course ${state.room.currentCourseNumber}/${state.room.totalCourses} • ${state.me.strokes} total stroke${state.me.strokes === 1 ? "" : "s"}</span>
     </div>
 
     ${statusCard}
@@ -1909,10 +2241,10 @@ function renderGolfControls() {
         ? `
           <section class="spectator-card">
             <p class="panel-kicker">Spectator Mode</p>
-            <h3>${isRoomOver() ? "Final hole results" : "Watch the rest of the hole"}</h3>
+            <h3>${isRoomOver() ? "Final round results" : "Watch the rest of the course"}</h3>
             <p>${isRoomOver()
-              ? "Swing controls are disabled because every player has finished."
-              : "Your ball is off the course now. Stay on the golf view to watch the remaining players navigate the hole."}</p>
+              ? "Swing controls are disabled because the round is over."
+              : "Your ball is off the course for now. Stay on the golf view to watch the remaining players finish this course."}</p>
           </section>
         `
         : `
@@ -2005,7 +2337,9 @@ function renderGame() {
 
   if (showingGolf) {
     renderGolfControls();
-    elements.courseName.textContent = getActiveGolfCourse()?.name ?? "";
+    elements.courseName.textContent = state.room
+      ? `${getActiveGolfCourse()?.name ?? ""} • Course ${state.room.currentCourseNumber}/${state.room.totalCourses}`
+      : getActiveGolfCourse()?.name ?? "";
     requestAnimationFrame(() => drawCourse());
   } else {
     renderProblemPanel();
@@ -2052,7 +2386,8 @@ function renderViews() {
 function resetSharedGameState() {
   clearCopyRoomFeedback();
   state.codeDraft = "";
-  state.activeQuestionAssignment = null;
+  state.questionDrafts = {};
+  state.activeQuestionKey = null;
   state.evaluation = null;
   state.busy = false;
   state.chatBusy = false;
@@ -2103,6 +2438,18 @@ function onResetPracticeHole() {
   drawCourse();
 }
 
+function buildRoomPayload(kind, form) {
+  const payload = Object.fromEntries(new FormData(form).entries());
+  payload.courseCount = String(getCourseCountValue(kind));
+
+  const courseIds = getCustomCourseOrder(kind);
+  if (courseIds) {
+    payload.courseIds = courseIds;
+  }
+
+  return payload;
+}
+
 async function onStartSolo(event) {
   event.preventDefault();
   if (state.busy) {
@@ -2128,10 +2475,7 @@ async function onStartSolo(event) {
 
   try {
     const createResponse = await createRoom({
-      name: payload.name,
-      difficulty: payload.difficulty,
-      questionSource: payload.questionSource,
-      courseId: payload.courseId,
+      ...buildRoomPayload("solo", elements.soloForm),
       timeLimitMinutes: 0
     });
     createdSession = {
@@ -2164,10 +2508,9 @@ async function onStartSolo(event) {
 async function onCreateRoom(event) {
   event.preventDefault();
   clearNotice();
-  const payload = Object.fromEntries(new FormData(elements.createForm).entries());
 
   try {
-    const response = await createRoom(payload);
+    const response = await createRoom(buildRoomPayload("create", elements.createForm));
     persistSession({
       roomCode: response.roomCode,
       playerId: response.playerId,
@@ -2295,6 +2638,49 @@ async function onAdvanceQuestion() {
     state.busy = false;
     if (getCurrentStage() === "challenge" && state.room && state.me) {
       renderEditor();
+    }
+  }
+}
+
+async function onProblemDifficultyChange(event) {
+  const nextDifficulty = event.target.value;
+  if (
+    !state.session ||
+    !state.me ||
+    state.busy ||
+    state.room?.difficultyMode !== "player-choice" ||
+    nextDifficulty === state.me.activeDifficulty ||
+    state.me.ball.sunk ||
+    isRoomOver(state.room?.status)
+  ) {
+    event.target.value = state.me?.activeDifficulty ?? nextDifficulty;
+    return;
+  }
+
+  state.busy = true;
+  renderGame();
+
+  try {
+    const response = await setPlayerDifficultyRequest(
+      state.session.roomCode,
+      state.session.playerId,
+      state.session.sessionId,
+      nextDifficulty
+    );
+    applyRoomState(response.state);
+  } catch (error) {
+    state.evaluation = {
+      passed: false,
+      scope: "all",
+      message: error.message,
+      testsPassed: 0,
+      totalTests: 0,
+      results: []
+    };
+  } finally {
+    state.busy = false;
+    if (getCurrentStage() === "challenge" && state.room && state.me) {
+      renderGame();
     }
   }
 }
@@ -2525,6 +2911,10 @@ function onResetCode() {
   }
 
   state.codeDraft = state.me.currentQuestion.starterCode;
+  const questionKey = getCurrentQuestionKey();
+  if (questionKey) {
+    state.questionDrafts[questionKey] = state.codeDraft;
+  }
   state.evaluation = null;
   renderEditorTerminal();
 
@@ -2683,6 +3073,9 @@ async function init() {
   }
 
   elements.landingCreditRules.textContent = formatSwingCreditRules(state.bootstrap.swingCreditsByDifficulty);
+  elements.createDifficultyMode.innerHTML = state.bootstrap.difficultyModes
+    .map((mode) => `<option value="${mode}">${formatDifficultyMode(mode)}</option>`)
+    .join("");
   elements.createDifficulty.innerHTML = state.bootstrap.difficulties
     .map((difficulty) => `<option value="${difficulty}">${formatDifficulty(difficulty)}</option>`)
     .join("");
@@ -2704,8 +3097,12 @@ async function init() {
   const courseOptions = state.bootstrap.courses
     .map((course) => `<option value="${course.id}">${escapeHtml(course.name)}</option>`)
     .join("");
-  elements.createCourse.innerHTML = courseOptions;
   elements.soloCourse.innerHTML = courseOptions;
+  const courseCountOptions = state.bootstrap.courses
+    .map((_, index) => `<option value="${index + 1}">${formatCourseCountLabel(index + 1)}</option>`)
+    .join("");
+  elements.createCourseCount.innerHTML = courseCountOptions;
+  elements.soloCourseCount.innerHTML = courseCountOptions;
 
   elements.createTimeLimit.innerHTML = state.bootstrap.timeLimitMinutesOptions
     .map((minutes) => {
@@ -2713,8 +3110,13 @@ async function init() {
       return `<option value="${minutes}">${escapeHtml(label)}</option>`;
     })
     .join("");
+  elements.soloDifficultyMode.innerHTML = elements.createDifficultyMode.innerHTML;
+  elements.soloDifficultyMode.value = elements.createDifficultyMode.value;
   elements.soloDifficulty.innerHTML = elements.createDifficulty.innerHTML;
   elements.soloDifficulty.value = elements.createDifficulty.value;
+  state.createCourseOrder = normalizeCourseOrderSelection([], getCourseCountValue("create"));
+  state.soloCourseOrder = normalizeCourseOrderSelection([], getCourseCountValue("solo"));
+  syncCreateFormMode();
   syncSoloFormMode();
 
   await restoreSession();

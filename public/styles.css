@@ -444,6 +444,36 @@ label {
   gap: 0;
 }
 
+.advanced-settings {
+  margin-top: 16px;
+  border: 1px solid var(--outline);
+  border-radius: 18px;
+  background: rgba(19, 39, 30, 0.05);
+  overflow: hidden;
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 14px 16px;
+  font-weight: 700;
+}
+
+.advanced-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-settings__body {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+
+.course-order-fields {
+  display: grid;
+  gap: 0;
+}
+
 .solo-form__mode-note {
   min-height: 3.2em;
   margin: 0;
@@ -598,6 +628,15 @@ a.ghost-inline {
   background: rgba(19, 39, 30, 0.08);
 }
 
+.setting-row--stacked {
+  display: grid;
+  justify-content: stretch;
+}
+
+.setting-row--stacked strong {
+  line-height: 1.5;
+}
+
 .waiting-footer {
   align-items: center;
 }
@@ -613,46 +652,31 @@ a.ghost-inline {
   overflow: hidden;
 }
 
-.game-shell--with-timer {
-  padding-top: 78px;
-}
-
 .game-timer-hud {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 20px);
-  right: calc(env(safe-area-inset-right, 0px) + 24px);
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  right: calc(env(safe-area-inset-right, 0px) + 18px);
   z-index: 18;
   pointer-events: none;
 }
 
 .game-timer-pill {
-  min-width: 170px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 14px 12px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--timer-pill-border);
-  background: var(--timer-pill-bg);
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
   color: var(--timer-pill-text);
-  box-shadow: 0 18px 44px rgba(5, 11, 8, 0.24);
-  backdrop-filter: blur(12px);
-}
-
-.game-timer-pill__label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--timer-pill-kicker);
+  opacity: 0.72;
 }
 
 .game-timer-pill strong {
-  font-size: 1.05rem;
-  font-weight: 700;
+  display: block;
+  font-size: 1.1rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
 }
 
 .results-screen {
@@ -811,6 +835,26 @@ a.ghost-inline {
   margin-top: 14px;
 }
 
+.problem-difficulty-picker {
+  display: grid;
+  gap: 8px;
+  max-width: 280px;
+  margin-top: 16px;
+}
+
+.problem-difficulty-picker label {
+  gap: 8px;
+  margin-top: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.problem-difficulty-picker p {
+  margin: 0;
+  line-height: 1.55;
+}
+
 .difficulty-pill,
 .test-chip {
   padding: 7px 10px;
@@ -818,6 +862,16 @@ a.ghost-inline {
   font-size: 0.82rem;
   font-weight: 700;
   border: 1px solid transparent;
+}
+
+.difficulty-payout {
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #21493a;
+  background: rgba(19, 39, 30, 0.08);
+  border: 1px solid rgba(19, 39, 30, 0.12);
 }
 
 .difficulty-pill--easy {
@@ -860,6 +914,12 @@ body.theme-dark .difficulty-pill--hard {
   color: #ff9c88;
   background: rgba(239, 68, 68, 0.16);
   border-color: rgba(255, 156, 136, 0.24);
+}
+
+body.theme-dark .difficulty-payout {
+  color: #ecf4ef;
+  background: rgba(236, 244, 239, 0.08);
+  border-color: rgba(236, 244, 239, 0.1);
 }
 
 body.theme-dark .course-status-card,
@@ -1884,10 +1944,6 @@ body.theme-dark .shot-controls input[type="range"] {
     bottom: 16px;
   }
 
-  .game-shell--with-timer {
-    padding-top: 72px;
-  }
-
   .game-timer-hud {
     top: calc(env(safe-area-inset-top, 0px) + 16px);
     right: calc(env(safe-area-inset-right, 0px) + 16px);
@@ -1954,28 +2010,17 @@ body.theme-dark .shot-controls input[type="range"] {
     width: min(calc(100vw - 20px), 360px);
   }
 
-  .game-shell--with-timer {
-    padding-top: 68px;
-  }
-
   .game-timer-hud {
     top: calc(env(safe-area-inset-top, 0px) + 12px);
     right: calc(env(safe-area-inset-right, 0px) + 12px);
   }
 
   .game-timer-pill {
-    min-width: 154px;
-    gap: 10px;
-    padding: 10px 12px 10px 14px;
-  }
-
-  .game-timer-pill__label {
-    font-size: 0.68rem;
-    letter-spacing: 0.12em;
+    opacity: 0.66;
   }
 
   .game-timer-pill strong {
-    font-size: 0.96rem;
+    font-size: 0.98rem;
   }
 
   .results-actions {

@@ -1,4 +1,4 @@
-import { getCourseById, getCourseSummaries } from "../data/courses.js";
+import { getCourseById, getCourseCatalog, getCourseSummaries } from "../data/courses.js";
 import {
   DIFFICULTIES,
   QUESTION_SOURCES,
@@ -23,13 +23,18 @@ const MAX_PLAYERS_PER_ROOM = 6;
 const MAX_CHAT_MESSAGES = 80;
 const PLAYER_DISCONNECT_GRACE_MS = 8000;
 const ROOM_POST_GAME_RETENTION_MS = 30_000;
+const HOLE_ADVANCE_DELAY_MS = 1800;
 const TIME_LIMIT_OPTIONS_MINUTES = [0, 5, 10, 15, 20, 30, 45, 60];
+const DIFFICULTY_MODES = ["fixed", "player-choice"];
+const DEFAULT_DIFFICULTY_MODE = "fixed";
+const DEFAULT_PLAYER_CHOICE_DIFFICULTY = "easy";
 const DEV_MODE_NAME = "dev$mode!";
 const DEV_MODE_SWING_CREDITS = 999;
 const roomStore = new Map();
 const roomSubscribers = new Map();
 const roomExpirationTimers = new Map();
 const roomDeadlineTimers = new Map();
+const roomHoleAdvanceTimers = new Map();
 const PLAYER_COLORS = ["#ff7a59", "#4db6ac", "#ffd166", "#118ab2", "#ef476f", "#83c5be"];
 
 function createAppError(message, statusCode = 400) {
@@ -59,6 +64,31 @@ function normalizeDifficulty(difficulty) {
   return value;
 }
 
+function normalizeDifficultyMode(mode, fallback = DEFAULT_DIFFICULTY_MODE) {
+  const value = String(mode ?? fallback).toLowerCase();
+  if (!DIFFICULTY_MODES.includes(value)) {
+    throw createAppError("Invalid difficulty mode.");
+  }
+  return value;
+}
+
+function normalizeRoomDifficultyConfig(difficultyMode, difficulty) {
+  if (difficultyMode === "player-choice") {
+    return {
+      difficulty: null,
+      defaultDifficulty:
+        difficulty === undefined || difficulty === null || difficulty === ""
+          ? DEFAULT_PLAYER_CHOICE_DIFFICULTY
+          : normalizeDifficulty(difficulty)
+    };
+  }
+
+  return {
+    difficulty: normalizeDifficulty(difficulty),
+    defaultDifficulty: null
+  };
+}
+
 function normalizeQuestionSource(source, fallback = "local") {
   const value = String(source ?? fallback).toLowerCase();
   if (!QUESTION_SOURCES.includes(value)) {
@@ -78,6 +108,96 @@ function normalizeTimeLimitMinutes(value) {
   }
 
   return minutes === 0 ? null : minutes;
+}
+
+function getAvailableCourseIds() {
+  return getCourseCatalog().map((course) => course.id);
+}
+
+function shuffleList(values) {
+  const shuffled = [...values];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+
+  return shuffled;
+}
+
+function normalizeCourseId(courseId) {
+  const normalized = String(courseId ?? "").trim();
+  if (!normalized) {
+    throw createAppError("Course is required.");
+  }
+
+  if (!getAvailableCourseIds().includes(normalized)) {
+    throw createAppError("Invalid course.");
+  }
+
+  return normalized;
+}
+
+function normalizeCourseCount(value, fallback = 1) {
+  const availableCount = getAvailableCourseIds().length;
+  const normalizedValue = value === undefined || value === null || value === "" ? fallback : value;
+  const courseCount = Number(normalizedValue);
+
+  if (!Number.isInteger(courseCount) || courseCount < 1 || courseCount > availableCount) {
+    throw createAppError("Invalid course count.");
+  }
+
+  return courseCount;
+}
+
+function normalizeCourseIds(courseIds) {
+  if (courseIds === undefined || courseIds === null) {
+    return null;
+  }
+
+  if (!Array.isArray(courseIds)) {
+    throw createAppError("Invalid course order.");
+  }
+
+  const normalizedCourseIds = courseIds.map((courseId) => normalizeCourseId(courseId));
+
+  if (!normalizedCourseIds.length) {
+    throw createAppError("At least one course must be selected.");
+  }
+
+  if (new Set(normalizedCourseIds).size !== normalizedCourseIds.length) {
+    throw createAppError("Courses must be unique.");
+  }
+
+  return normalizedCourseIds;
+}
+
+function resolveRoomCourseIds({ courseCount, courseIds, courseId }) {
+  const normalizedCourseIds = normalizeCourseIds(courseIds);
+  const resolvedCourseCount = normalizeCourseCount(
+    courseCount,
+    normalizedCourseIds?.length ?? (courseId ? 1 : 1)
+  );
+
+  if (normalizedCourseIds) {
+    if (normalizedCourseIds.length !== resolvedCourseCount) {
+      throw createAppError("Selected course order must match the chosen course count.");
+    }
+
+    return normalizedCourseIds;
+  }
+
+  if (courseId !== undefined && courseId !== null && courseId !== "") {
+    const normalizedCourseId = normalizeCourseId(courseId);
+
+    if (resolvedCourseCount !== 1) {
+      throw createAppError("A single course cannot be combined with multiple-course selection.");
+    }
+
+    return [normalizedCourseId];
+  }
+
+  return shuffleList(getAvailableCourseIds()).slice(0, resolvedCourseCount);
 }
 
 function normalizeChatBody(message) {
@@ -148,10 +268,33 @@ function clearAllRoomDeadlineTimers() {
   roomDeadlineTimers.clear();
 }
 
+function cancelRoomHoleAdvance(roomCode) {
+  const timer = roomHoleAdvanceTimers.get(roomCode);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  roomHoleAdvanceTimers.delete(roomCode);
+}
+
+function clearAllRoomHoleAdvanceTimers() {
+  roomHoleAdvanceTimers.forEach((timer) => clearTimeout(timer));
+  roomHoleAdvanceTimers.clear();
+}
+
+function createDifficultyLookup(createValue) {
+  return Object.fromEntries(
+    DIFFICULTIES.map((difficulty) => [difficulty, createValue(difficulty)])
+  );
+}
+
 function createPlayer(room, name) {
   const normalizedName = normalizeName(name);
-  const course = getCourseById(room.courseId);
+  const course = getCurrentCourse(room);
   const devModeEnabled = isDevModeName(normalizedName);
+  const activeDifficulty =
+    room.difficultyMode === "player-choice" ? room.defaultDifficulty : room.difficulty;
 
   return {
     id: createId("player"),
@@ -161,12 +304,17 @@ function createPlayer(room, name) {
     color: PLAYER_COLORS[room.playerOrder.length % PLAYER_COLORS.length],
     joinedAt: Date.now(),
     strokes: 0,
+    currentHoleStrokes: 0,
     swingCredits: devModeEnabled ? DEV_MODE_SWING_CREDITS : 0,
     solvedQuestionIds: [],
-    currentQuestionId: null,
-    currentQuestionAssignment: 0,
-    awaitingNextQuestion: false,
+    activeDifficulty,
+    questionStateByDifficulty: createDifficultyLookup(() => ({
+      currentQuestionId: null,
+      currentQuestionAssignment: 0,
+      awaitingNextQuestion: false
+    })),
     ball: createSpawnBall(course),
+    holesCompleted: 0,
     finishPlace: null,
     finishedAt: null,
     devModeEnabled,
@@ -206,22 +354,34 @@ function isFinalRoomStatus(status) {
 
 function syncRoomCompletionState(room) {
   room.finishOrder = room.finishOrder.filter((playerId) => room.players.has(playerId));
-  const leaderIds = getLeaderIdsFromEntries(getLeaderboardEntries(room));
-  room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
 
   if (room.status === "waiting" || room.status === "ended" || room.status === "timed_out") {
+    cancelRoomHoleAdvance(room.code);
+    const leaderIds = getLeaderIdsFromEntries(getLeaderboardEntries(room));
+    room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
     return;
   }
 
-  const everyRemainingPlayerFinished = room.playerOrder.length > 0 && room.finishOrder.length === room.playerOrder.length;
+  const everyRemainingPlayerFinished =
+    room.playerOrder.length > 0 && room.finishOrder.length === room.playerOrder.length;
   if (everyRemainingPlayerFinished) {
-    room.status = "finished";
-    room.completedAt ??= Date.now();
-    return;
+    if (hasNextCourse(room)) {
+      room.status = "active";
+      room.completedAt = null;
+      scheduleHoleAdvance(room);
+    } else {
+      cancelRoomHoleAdvance(room.code);
+      room.status = "finished";
+      room.completedAt ??= Date.now();
+    }
+  } else {
+    cancelRoomHoleAdvance(room.code);
+    room.status = "active";
+    room.completedAt = null;
   }
 
-  room.status = "active";
-  room.completedAt = null;
+  const leaderIds = getLeaderIdsFromEntries(getLeaderboardEntries(room));
+  room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
 }
 
 function closeRoomIfExpired(roomCode) {
@@ -264,6 +424,7 @@ function timeOutRoom(room) {
   }
 
   cancelRoomDeadline(room.code);
+  cancelRoomHoleAdvance(room.code);
   room.status = "timed_out";
   room.completedAt ??= Date.now();
   room.endVotePlayerIds.clear();
@@ -343,8 +504,111 @@ function ensureUniquePlayerName(room, name) {
   }
 }
 
-function createQuestionSequenceBlock(room) {
-  const questionIds = getQuestionPool(room.difficulty, room.questionSource).map((question) => question.id);
+function getCurrentCourseId(room) {
+  return room.courseIds[room.currentCourseIndex];
+}
+
+function getCurrentCourse(room) {
+  return getCourseById(getCurrentCourseId(room));
+}
+
+function hasNextCourse(room) {
+  return room.currentCourseIndex + 1 < room.courseIds.length;
+}
+
+function resetPlayersForNextCourse(room) {
+  const course = getCurrentCourse(room);
+
+  room.playerOrder.forEach((playerId) => {
+    const player = room.players.get(playerId);
+    if (!player) {
+      return;
+    }
+
+    player.ball = createSpawnBall(course);
+    player.currentHoleStrokes = 0;
+    player.finishPlace = null;
+    player.finishedAt = null;
+  });
+}
+
+function advanceRoomToNextCourse(room) {
+  cancelRoomHoleAdvance(room.code);
+  if (!hasNextCourse(room)) {
+    return false;
+  }
+
+  room.currentCourseIndex += 1;
+  room.finishOrder = [];
+  room.status = "active";
+  room.completedAt = null;
+  resetPlayersForNextCourse(room);
+  return true;
+}
+
+function scheduleHoleAdvance(room) {
+  cancelRoomHoleAdvance(room.code);
+
+  if (room.status !== "active" || !hasNextCourse(room)) {
+    return;
+  }
+
+  const everyRemainingPlayerFinished =
+    room.playerOrder.length > 0 && room.finishOrder.length === room.playerOrder.length;
+  if (!everyRemainingPlayerFinished) {
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    roomHoleAdvanceTimers.delete(room.code);
+    const latestRoom = roomStore.get(room.code);
+    if (!latestRoom || latestRoom.status !== "active") {
+      return;
+    }
+
+    const everyoneStillFinished =
+      latestRoom.playerOrder.length > 0 && latestRoom.finishOrder.length === latestRoom.playerOrder.length;
+    if (!everyoneStillFinished || !hasNextCourse(latestRoom)) {
+      return;
+    }
+
+    advanceRoomToNextCourse(latestRoom);
+    syncRoomCompletionState(latestRoom);
+    syncRoomDeadline(latestRoom);
+    syncRoomExpiration(latestRoom);
+    broadcastRoomState(latestRoom);
+  }, HOLE_ADVANCE_DELAY_MS);
+
+  roomHoleAdvanceTimers.set(room.code, timer);
+}
+
+function getSelectableDifficultyForPlayer(room, difficulty) {
+  if (room.difficultyMode !== "player-choice") {
+    if (difficulty && normalizeDifficulty(difficulty) !== room.difficulty) {
+      throw createAppError("This room uses a fixed difficulty.", 409);
+    }
+
+    return room.difficulty;
+  }
+
+  return normalizeDifficulty(difficulty ?? room.defaultDifficulty);
+}
+
+function getPlayerDifficultyState(player, difficulty) {
+  const questionState = player.questionStateByDifficulty?.[difficulty];
+  if (!questionState) {
+    throw createAppError("Invalid difficulty.");
+  }
+
+  return questionState;
+}
+
+function getPlayerActiveDifficulty(room, player) {
+  return room.difficultyMode === "player-choice" ? player.activeDifficulty : room.difficulty;
+}
+
+function createQuestionSequenceBlock(room, difficulty) {
+  const questionIds = getQuestionPool(difficulty, room.questionSource).map((question) => question.id);
 
   for (let index = questionIds.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
@@ -354,25 +618,42 @@ function createQuestionSequenceBlock(room) {
   return questionIds;
 }
 
-function getQuestionIdForAssignment(room, assignmentIndex) {
-  while (room.questionSequence.length <= assignmentIndex) {
-    room.questionSequence.push(...createQuestionSequenceBlock(room));
+function getQuestionIdForAssignment(room, difficulty, assignmentIndex) {
+  const questionSequence = room.questionSequences[difficulty];
+
+  while (questionSequence.length <= assignmentIndex) {
+    questionSequence.push(...createQuestionSequenceBlock(room, difficulty));
   }
 
-  return room.questionSequence[assignmentIndex];
+  return questionSequence[assignmentIndex];
 }
 
-function pickQuestionForPlayer(room, player) {
-  const assignmentIndex = player.currentQuestionAssignment;
-  const questionId = getQuestionIdForAssignment(room, assignmentIndex);
-  player.currentQuestionId = questionId;
-  player.currentQuestionAssignment += 1;
-  player.awaitingNextQuestion = false;
+function pickQuestionForPlayer(room, player, difficulty = getPlayerActiveDifficulty(room, player)) {
+  const normalizedDifficulty = getSelectableDifficultyForPlayer(room, difficulty);
+  const questionState = getPlayerDifficultyState(player, normalizedDifficulty);
+  const assignmentIndex = questionState.currentQuestionAssignment;
+  const questionId = getQuestionIdForAssignment(room, normalizedDifficulty, assignmentIndex);
+  questionState.currentQuestionId = questionId;
+  questionState.currentQuestionAssignment += 1;
+  questionState.awaitingNextQuestion = false;
+  player.activeDifficulty = normalizedDifficulty;
   return getQuestionById(questionId);
 }
 
+function ensurePlayerHasQuestionForDifficulty(room, player, difficulty = getPlayerActiveDifficulty(room, player)) {
+  const normalizedDifficulty = getSelectableDifficultyForPlayer(room, difficulty);
+  player.activeDifficulty = normalizedDifficulty;
+
+  const questionState = getPlayerDifficultyState(player, normalizedDifficulty);
+  if (!questionState.currentQuestionId) {
+    pickQuestionForPlayer(room, player, normalizedDifficulty);
+  }
+
+  return questionState;
+}
+
 function serializePlayer(room, player, metrics = null) {
-  const course = getCourseById(room.courseId);
+  const course = getCurrentCourse(room);
   const solvedCount = player.solvedQuestionIds.length;
   const distanceToHole = metrics?.distanceToHole ?? getDistanceToHole(course, player.ball);
   const progressPercent = metrics?.progressPercent ?? getProgressPercent(course, player.ball);
@@ -381,13 +662,14 @@ function serializePlayer(room, player, metrics = null) {
     name: player.name,
     color: player.color,
     strokes: player.strokes,
+    currentHoleStrokes: player.currentHoleStrokes,
     swingCredits: getDisplayedSwingCredits(player),
     solvedCount,
     ball: player.ball,
     finishPlace: player.finishPlace,
     finishedAt: player.finishedAt,
-    holesCompleted: player.ball.sunk ? 1 : 0,
-    holesTotal: 1,
+    holesCompleted: player.holesCompleted,
+    holesTotal: room.courseIds.length,
     distanceToHole,
     progressPercent,
     leaderboardRank: metrics?.leaderboardRank ?? null
@@ -395,8 +677,10 @@ function serializePlayer(room, player, metrics = null) {
 }
 
 function getPlayerStandingMetrics(room, player) {
-  const course = getCourseById(room.courseId);
+  const course = getCurrentCourse(room);
   return {
+    holesCompleted: player.holesCompleted,
+    holesTotal: room.courseIds.length,
     finishPlace: player.finishPlace,
     sunk: player.ball.sunk,
     distanceToHole: getDistanceToHole(course, player.ball),
@@ -407,7 +691,27 @@ function getPlayerStandingMetrics(room, player) {
 }
 
 function comparePlayerStandings(left, right) {
-  if (left.finishPlace && right.finishPlace) {
+  if (left.holesCompleted !== right.holesCompleted) {
+    return right.holesCompleted - left.holesCompleted;
+  }
+
+  const allCoursesCompleted =
+    left.holesTotal > 1 &&
+    left.holesCompleted === left.holesTotal &&
+    right.holesCompleted === right.holesTotal;
+  if (allCoursesCompleted) {
+    if (left.strokes !== right.strokes) {
+      return left.strokes - right.strokes;
+    }
+
+    if (left.solvedCount !== right.solvedCount) {
+      return right.solvedCount - left.solvedCount;
+    }
+
+    return 0;
+  }
+
+  if (left.finishPlace && right.finishPlace && left.finishPlace !== right.finishPlace) {
     return left.finishPlace - right.finishPlace;
   }
 
@@ -422,12 +726,12 @@ function comparePlayerStandings(left, right) {
     return left.distanceToHole - right.distanceToHole;
   }
 
-  if (left.solvedCount !== right.solvedCount) {
-    return right.solvedCount - left.solvedCount;
-  }
-
   if (left.strokes !== right.strokes) {
     return left.strokes - right.strokes;
+  }
+
+  if (left.solvedCount !== right.solvedCount) {
+    return right.solvedCount - left.solvedCount;
   }
 
   return 0;
@@ -493,14 +797,17 @@ function serializeRoomTimer(room) {
 
 function serializeRoomForPlayer(room, playerId) {
   const player = getPlayer(room, playerId);
-  const course = getCourseById(room.courseId);
+  const course = getCurrentCourse(room);
+  const courseSummariesById = new Map(getCourseSummaries().map((courseSummary) => [courseSummary.id, courseSummary]));
   const leaderboardEntries = getLeaderboardEntries(room);
   const players = leaderboardEntries.map((entry) => serializePlayer(room, entry.player, entry.metrics));
   const leaderIds = getLeaderIdsFromEntries(leaderboardEntries);
+  const activeDifficulty = getPlayerActiveDifficulty(room, player);
+  const questionState = getPlayerDifficultyState(player, activeDifficulty);
   const currentQuestion =
-    room.status !== "active"
+    room.status !== "active" || !questionState.currentQuestionId
       ? null
-      : sanitizeQuestion(getQuestionById(player.currentQuestionId));
+      : sanitizeQuestion(getQuestionById(questionState.currentQuestionId));
 
   return {
     room: {
@@ -509,8 +816,17 @@ function serializeRoomForPlayer(room, playerId) {
       winnerId: room.winnerId,
       leaderIds,
       hostId: room.hostId,
+      difficultyMode: room.difficultyMode,
       difficulty: room.difficulty,
+      defaultDifficulty: room.defaultDifficulty,
       questionSource: room.questionSource,
+      courseIds: [...room.courseIds],
+      courseOrder: room.courseIds.map(
+        (courseId) => courseSummariesById.get(courseId) ?? { id: courseId, name: courseId, description: "" }
+      ),
+      currentCourseIndex: room.currentCourseIndex,
+      currentCourseNumber: room.currentCourseIndex + 1,
+      totalCourses: room.courseIds.length,
       createdAt: room.createdAt,
       completedAt: room.completedAt,
       expiresAt: room.expiresAt,
@@ -530,15 +846,18 @@ function serializeRoomForPlayer(room, playerId) {
       name: player.name,
       color: player.color,
       strokes: player.strokes,
+      currentHoleStrokes: player.currentHoleStrokes,
       swingCredits: getDisplayedSwingCredits(player),
       solvedCount: player.solvedQuestionIds.length,
       ball: player.ball,
+      holesCompleted: player.holesCompleted,
       finishPlace: player.finishPlace,
       finishedAt: player.finishedAt,
       isHost: player.id === room.hostId,
       hasEndVote: room.endVotePlayerIds.has(player.id),
-      awaitingNextQuestion: player.awaitingNextQuestion,
-      currentQuestionAssignment: player.currentQuestionAssignment,
+      activeDifficulty,
+      awaitingNextQuestion: questionState.awaitingNextQuestion,
+      currentQuestionAssignment: questionState.currentQuestionAssignment,
       devModeEnabled: player.devModeEnabled,
       currentQuestion
     }
@@ -594,6 +913,7 @@ function closeRoom(room, message = "Room closed.") {
   clearRoomDisconnectTimers(room);
   cancelRoomExpiration(room.code);
   cancelRoomDeadline(room.code);
+  cancelRoomHoleAdvance(room.code);
 
   const subscribers = roomSubscribers.get(room.code);
   if (subscribers) {
@@ -670,6 +990,7 @@ function unregisterPlayerConnection(room, playerId) {
 export function getBootstrapPayload() {
   return {
     difficulties: DIFFICULTIES,
+    difficultyModes: DIFFICULTY_MODES,
     questionSources: QUESTION_SOURCES,
     courses: getCourseSummaries(),
     swingCreditsByDifficulty: { ...SWING_CREDITS_BY_DIFFICULTY },
@@ -680,11 +1001,15 @@ export function getBootstrapPayload() {
   };
 }
 
-export function createRoom({ name, difficulty, courseId, questionSource, timeLimitMinutes }) {
-  const normalizedDifficulty = normalizeDifficulty(difficulty);
+export function createRoom({ name, difficultyMode, difficulty, courseCount, courseIds, courseId, questionSource, timeLimitMinutes }) {
+  const normalizedDifficultyMode = normalizeDifficultyMode(difficultyMode);
+  const normalizedDifficultyConfig = normalizeRoomDifficultyConfig(
+    normalizedDifficultyMode,
+    difficulty
+  );
   const normalizedQuestionSource = normalizeQuestionSource(questionSource, "local");
   const normalizedTimeLimitMinutes = normalizeTimeLimitMinutes(timeLimitMinutes);
-  const selectedCourse = getCourseById(courseId);
+  const resolvedCourseIds = resolveRoomCourseIds({ courseCount, courseIds, courseId });
   let roomCode = createRoomCode();
 
   while (roomStore.has(roomCode)) {
@@ -694,9 +1019,12 @@ export function createRoom({ name, difficulty, courseId, questionSource, timeLim
   const room = {
     code: roomCode,
     createdAt: Date.now(),
-    difficulty: normalizedDifficulty,
+    difficultyMode: normalizedDifficultyMode,
+    difficulty: normalizedDifficultyConfig.difficulty,
+    defaultDifficulty: normalizedDifficultyConfig.defaultDifficulty,
     questionSource: normalizedQuestionSource,
-    courseId: selectedCourse.id,
+    courseIds: resolvedCourseIds,
+    currentCourseIndex: 0,
     status: "waiting",
     winnerId: null,
     hostId: null,
@@ -705,7 +1033,7 @@ export function createRoom({ name, difficulty, courseId, questionSource, timeLim
     chatMessages: [],
     players: new Map(),
     playerOrder: [],
-    questionSequence: [],
+    questionSequences: createDifficultyLookup(() => []),
     startedAt: null,
     timeLimitMs: normalizedTimeLimitMinutes ? normalizedTimeLimitMinutes * 60_000 : null,
     deadlineAt: null,
@@ -779,8 +1107,8 @@ export function startRoom({ roomCode, playerId, sessionId }) {
   room.deadlineAt = room.timeLimitMs ? room.startedAt + room.timeLimitMs : null;
   room.playerOrder.forEach((id) => {
     const currentPlayer = room.players.get(id);
-    if (currentPlayer && !currentPlayer.currentQuestionId) {
-      pickQuestionForPlayer(room, currentPlayer);
+    if (currentPlayer) {
+      ensurePlayerHasQuestionForDifficulty(room, currentPlayer);
     }
   });
 
@@ -808,6 +1136,7 @@ export function toggleEndVote({ roomCode, playerId, sessionId }) {
   }
 
   if (room.endVotePlayerIds.size === room.playerOrder.length && room.playerOrder.length > 0) {
+    cancelRoomHoleAdvance(room.code);
     room.status = "ended";
     room.completedAt ??= Date.now();
   }
@@ -899,22 +1228,34 @@ export function submitAnswer({ roomCode, playerId, sessionId, submission, scope 
   const player = getAuthorizedPlayer(room, playerId, sessionId);
   ensureRoomStarted(room);
   ensurePlayerCanStillPlay(player);
-  const question = getQuestionById(player.currentQuestionId);
+  const activeDifficulty = getPlayerActiveDifficulty(room, player);
+  const questionState = getPlayerDifficultyState(player, activeDifficulty);
+  const question = getQuestionById(questionState.currentQuestionId);
   const evaluation = evaluateSubmission(question, String(submission ?? ""), scope);
   const creditsAwarded = getSwingCreditsForDifficulty(question.difficulty);
 
-  if (evaluation.passed && evaluation.scope !== "sample" && !player.awaitingNextQuestion && !player.devModeEnabled) {
+  if (
+    evaluation.passed &&
+    evaluation.scope !== "sample" &&
+    !questionState.awaitingNextQuestion &&
+    !player.devModeEnabled
+  ) {
     player.swingCredits += creditsAwarded;
     if (!player.solvedQuestionIds.includes(question.id)) {
       player.solvedQuestionIds.push(question.id);
     }
-    player.awaitingNextQuestion = true;
+    questionState.awaitingNextQuestion = true;
     evaluation.message = `All tests passed. ${formatSwingCredits(creditsAwarded)} awarded.`;
-  } else if (evaluation.passed && evaluation.scope !== "sample" && !player.awaitingNextQuestion && player.devModeEnabled) {
+  } else if (
+    evaluation.passed &&
+    evaluation.scope !== "sample" &&
+    !questionState.awaitingNextQuestion &&
+    player.devModeEnabled
+  ) {
     if (!player.solvedQuestionIds.includes(question.id)) {
       player.solvedQuestionIds.push(question.id);
     }
-    player.awaitingNextQuestion = true;
+    questionState.awaitingNextQuestion = true;
     evaluation.message = "All tests passed. Unlimited swings enabled.";
   }
 
@@ -931,12 +1272,32 @@ export function advanceQuestion({ roomCode, playerId, sessionId }) {
   const player = getAuthorizedPlayer(room, playerId, sessionId);
   ensureRoomStarted(room);
   ensurePlayerCanStillPlay(player);
+  const activeDifficulty = getPlayerActiveDifficulty(room, player);
+  const questionState = getPlayerDifficultyState(player, activeDifficulty);
 
-  if (!player.awaitingNextQuestion) {
+  if (!questionState.awaitingNextQuestion) {
     throw createAppError("Solve the current question before advancing.", 409);
   }
 
-  pickQuestionForPlayer(room, player);
+  pickQuestionForPlayer(room, player, activeDifficulty);
+  broadcastRoomState(room);
+
+  return {
+    state: serializeRoomForPlayer(room, player.id)
+  };
+}
+
+export function setPlayerDifficulty({ roomCode, playerId, sessionId, difficulty }) {
+  const room = getRoomByCode(roomCode);
+  const player = getAuthorizedPlayer(room, playerId, sessionId);
+  ensureRoomStarted(room);
+  ensurePlayerCanStillPlay(player);
+
+  if (room.difficultyMode !== "player-choice") {
+    throw createAppError("This room uses a fixed difficulty.", 409);
+  }
+
+  ensurePlayerHasQuestionForDifficulty(room, player, difficulty);
   broadcastRoomState(room);
 
   return {
@@ -947,7 +1308,7 @@ export function advanceQuestion({ roomCode, playerId, sessionId }) {
 export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
-  const course = getCourseById(room.courseId);
+  const course = getCurrentCourse(room);
   ensureRoomStarted(room);
   ensurePlayerCanStillPlay(player);
 
@@ -967,12 +1328,14 @@ export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
     player.swingCredits -= 1;
   }
   player.strokes += 1;
+  player.currentHoleStrokes += 1;
 
   if (player.ball.sunk) {
     if (!player.finishPlace) {
       room.finishOrder.push(player.id);
       player.finishPlace = room.finishOrder.length;
       player.finishedAt = Date.now();
+      player.holesCompleted += 1;
     }
   }
 
@@ -990,7 +1353,10 @@ export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
 export function listRooms() {
   return Array.from(roomStore.values()).map((room) => ({
     code: room.code,
+    difficultyMode: room.difficultyMode,
     difficulty: room.difficulty,
+    totalCourses: room.courseIds.length,
+    currentCourseNumber: room.currentCourseIndex + 1,
     questionSource: room.questionSource,
     players: room.playerOrder.length
   }));
@@ -1001,6 +1367,7 @@ export function resetRoomServiceState() {
   roomStore.clear();
   clearAllRoomDeadlineTimers();
   clearAllRoomExpirationTimers();
+  clearAllRoomHoleAdvanceTimers();
   roomSubscribers.forEach((subscribers, roomCode) => {
     for (const subscription of subscribers.values()) {
       subscription.closedByServer = true;

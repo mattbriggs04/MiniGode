@@ -10,6 +10,7 @@ import {
   listRooms,
   postChatMessage,
   resetRoomServiceState,
+  setPlayerDifficulty,
   startRoom,
   toggleEndVote,
   takeSwing,
@@ -341,12 +342,216 @@ test("sample-only runs do not award swings or rotate the question", () => {
 });
 
 test("bootstrap advertises supported room options and swing credit rules", () => {
+  assert.deepEqual(getBootstrapPayload().difficultyModes, ["fixed", "player-choice"]);
   assert.deepEqual(getBootstrapPayload().swingCreditsByDifficulty, {
     easy: 1,
     medium: 3,
     hard: 7
   });
   assert.deepEqual(getBootstrapPayload().timeLimitMinutesOptions, [0, 5, 10, 15, 20, 30, 45, 60]);
+});
+
+test("player-choice rooms keep a shared question order within each difficulty", () => {
+  const created = createRoom({
+    name: "Host",
+    difficultyMode: "player-choice",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  const guestStart = getRoomState({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  assert.equal(started.state.room.difficultyMode, "player-choice");
+  assert.equal(started.state.me.activeDifficulty, "easy");
+  assert.equal(started.state.me.currentQuestion.id, guestStart.me.currentQuestion.id);
+
+  const hostMedium = setPlayerDifficulty({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    difficulty: "medium"
+  });
+  const guestMedium = setPlayerDifficulty({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    difficulty: "medium"
+  });
+
+  assert.equal(hostMedium.state.me.currentQuestion.difficulty, "medium");
+  assert.equal(hostMedium.state.me.currentQuestion.id, guestMedium.state.me.currentQuestion.id);
+
+  submitAnswer({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    submission: SOLUTIONS[hostMedium.state.me.currentQuestion.functionName]
+  });
+  submitAnswer({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId,
+    submission: SOLUTIONS[guestMedium.state.me.currentQuestion.functionName]
+  });
+
+  const hostMediumAdvanced = advanceQuestion({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+  const guestMediumAdvanced = advanceQuestion({
+    roomCode: created.roomCode,
+    playerId: joined.playerId,
+    sessionId: joined.sessionId
+  });
+
+  assert.notEqual(hostMediumAdvanced.state.me.currentQuestion.id, hostMedium.state.me.currentQuestion.id);
+  assert.equal(hostMediumAdvanced.state.me.currentQuestion.id, guestMediumAdvanced.state.me.currentQuestion.id);
+});
+
+test("player-choice rooms keep progress separate for each difficulty", () => {
+  const created = createRoom({
+    name: "Host",
+    difficultyMode: "player-choice",
+    courseId: "sunset-switchbacks",
+    questionSource: "local"
+  });
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  const firstEasy = started.state.me.currentQuestion;
+  assert.equal(firstEasy.difficulty, "easy");
+
+  const firstMedium = setPlayerDifficulty({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    difficulty: "medium"
+  }).state.me.currentQuestion;
+
+  assert.equal(firstMedium.difficulty, "medium");
+
+  const backToEasy = setPlayerDifficulty({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    difficulty: "easy"
+  });
+
+  assert.equal(backToEasy.state.me.currentQuestion.id, firstEasy.id);
+
+  submitAnswer({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    submission: SOLUTIONS[firstEasy.functionName]
+  });
+
+  const secondEasy = advanceQuestion({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  }).state.me.currentQuestion;
+
+  assert.notEqual(secondEasy.id, firstEasy.id);
+  assert.equal(secondEasy.difficulty, "easy");
+
+  const mediumAfterEasyAdvance = setPlayerDifficulty({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    difficulty: "medium"
+  });
+
+  assert.equal(mediumAfterEasyAdvance.state.me.currentQuestion.id, firstMedium.id);
+  assert.equal(mediumAfterEasyAdvance.state.me.currentQuestion.difficulty, "medium");
+  assert.equal(mediumAfterEasyAdvance.state.me.currentQuestionAssignment, 1);
+});
+
+test("rooms can randomize a unique multi-course sequence from the course pool", () => {
+  const created = createRoom({
+    name: "Host",
+    difficulty: "easy",
+    courseCount: 3,
+    questionSource: "local"
+  });
+
+  assert.equal(created.state.room.totalCourses, 3);
+  assert.equal(created.state.room.courseOrder.length, 3);
+  assert.equal(new Set(created.state.room.courseOrder.map((course) => course.id)).size, 3);
+});
+
+test("rooms respect explicit course order and advance to the next course after a hole completes", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const created = createRoom({
+    name: "dev$mode!",
+    difficulty: "easy",
+    courseIds: ["meadow-run", "copper-canyon"],
+    questionSource: "local"
+  });
+
+  assert.equal(created.state.room.totalCourses, 2);
+  assert.deepEqual(
+    created.state.room.courseOrder.map((course) => course.id),
+    ["meadow-run", "copper-canyon"]
+  );
+
+  const started = startRoom({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(started.state.room.course.id, "meadow-run");
+  assert.equal(started.state.room.currentCourseNumber, 1);
+
+  const firstHoleFinished = takeSwing({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId,
+    ...MEADOW_RUN_SINK_SHOT
+  });
+
+  assert.equal(firstHoleFinished.state.room.status, "active");
+  assert.equal(firstHoleFinished.state.room.currentCourseNumber, 1);
+  assert.equal(firstHoleFinished.state.me.holesCompleted, 1);
+  assert.equal(firstHoleFinished.state.me.ball.sunk, true);
+
+  t.mock.timers.tick(1800);
+
+  const advanced = getRoomState({
+    roomCode: created.roomCode,
+    playerId: created.playerId,
+    sessionId: created.sessionId
+  });
+
+  assert.equal(advanced.room.currentCourseNumber, 2);
+  assert.equal(advanced.room.course.id, "copper-canyon");
+  assert.equal(advanced.me.holesCompleted, 1);
+  assert.equal(advanced.me.ball.sunk, false);
+  assert.equal(advanced.me.finishPlace, null);
+  assert.equal(advanced.me.currentHoleStrokes, 0);
+  assert.equal(advanced.me.strokes, 1);
 });
 
 test("players can join before the host starts and are blocked after start", () => {

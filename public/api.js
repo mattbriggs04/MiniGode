@@ -77,6 +77,13 @@ export function advanceQuestion(roomCode, playerId, sessionId) {
   });
 }
 
+export function setPlayerDifficulty(roomCode, playerId, sessionId, difficulty) {
+  return requestJson(`/api/rooms/${encodeURIComponent(roomCode)}/difficulty`, {
+    method: "POST",
+    body: JSON.stringify({ playerId, sessionId, difficulty })
+  });
+}
+
 export function takeSwing(roomCode, playerId, sessionId, angle, power) {
   return requestJson(`/api/rooms/${encodeURIComponent(roomCode)}/swing`, {
     method: "POST",

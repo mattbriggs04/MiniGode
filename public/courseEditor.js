@@ -224,6 +224,12 @@ function snapPoint(point, course) {
   };
 }
 
+function getDraggedCoordinate(value, offset, min, max) {
+  const nextValue = Number(value) - Number(offset);
+  const alignedValue = state.gridModeEnabled ? snapCoordinate(nextValue) : roundCoordinate(nextValue);
+  return clamp(alignedValue, min, max);
+}
+
 function formatCourseObject(course) {
   return JSON.stringify(course, null, 2).replace(/"([A-Za-z_$][\w$]*)":/g, "$1:");
 }
@@ -996,8 +1002,18 @@ function commitInteractionMove(point) {
     if (state.interaction.type === "move-point") {
       const targetName = state.interaction.target.type;
       const padding = targetName === "hole" ? draft.hole.radius : 14;
-      draft[targetName].x = clamp(roundCoordinate(point.x - state.interaction.offsetX), padding, draft.width - padding);
-      draft[targetName].y = clamp(roundCoordinate(point.y - state.interaction.offsetY), padding, draft.height - padding);
+      draft[targetName].x = getDraggedCoordinate(
+        point.x,
+        state.interaction.offsetX,
+        padding,
+        draft.width - padding
+      );
+      draft[targetName].y = getDraggedCoordinate(
+        point.y,
+        state.interaction.offsetY,
+        padding,
+        draft.height - padding
+      );
       return;
     }
 
@@ -1008,8 +1024,8 @@ function commitInteractionMove(point) {
         return;
       }
 
-      rect.x = clamp(roundCoordinate(point.x - state.interaction.offsetX), 0, draft.width - rect.width);
-      rect.y = clamp(roundCoordinate(point.y - state.interaction.offsetY), 0, draft.height - rect.height);
+      rect.x = getDraggedCoordinate(point.x, state.interaction.offsetX, 0, draft.width - rect.width);
+      rect.y = getDraggedCoordinate(point.y, state.interaction.offsetY, 0, draft.height - rect.height);
     }
   }, null, { persist: false, fullRender: false });
 }

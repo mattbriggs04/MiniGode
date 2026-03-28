@@ -283,198 +283,59 @@ const courseCatalog = [
       name: "Lagoon Link",
       description: "A course with a massive water lagoon in the center.",
       width: 1240,
-      height: 380,
-      tee: {
-        x: 100,
-        y: 340
-      },
-      hole: {
-        x: 1120,
-        y: 60,
-        radius: 18
-      },
+      height: 460,
+      tee: { x: 70, y: 400 },
+      hole: { x: 1110, y: 110, radius: 18 },
       walls: [
-        {
-          x: 390,
-          y: 0,
-          width: 30,
-          height: 150
-        },
-        {
-          x: 220,
-          y: 230,
-          width: 30,
-          height: 150
-        },
-        {
-          x: 150,
-          y: 80,
-          width: 100,
-          height: 30
-        },
-        {
-          x: 390,
-          y: 210,
-          width: 110,
-          height: 30
-        },
-        {
-          x: 860,
-          y: 0,
-          width: 150,
-          height: 50
-        },
-        {
-          x: 600,
-          y: 220,
-          width: 140,
-          height: 30
-        },
-        {
-          x: 1100,
-          y: 280,
-          width: 120,
-          height: 100
-        },
-        {
-          x: 990,
-          y: 150,
-          width: 30,
-          height: 170
-        },
-        {
-          x: 220,
-          y: 310,
-          width: 130,
-          height: 70
-        }
-      ],
+      { x: 390, y: 0, width: 30, height: 150 },
+      { x: 220, y: 230, width: 30, height: 150 },
+      { x: 210, y: 70, width: 100, height: 30, angle: 30 },
+      { x: 390, y: 210, width: 110, height: 30 },
+      { x: 860, y: 0, width: 150, height: 50 },
+      { x: 600, y: 220, width: 140, height: 30 },
+      { x: 1100, y: 340, width: 120, height: 100 },
+      { x: 990, y: 150, width: 30, height: 170 },
+      { x: 220, y: 370, width: 130, height: 70 },
+      { x: 0, y: 440, width: 1230, height: 20 },
+      { x: 1220, y: 440, width: 20, height: 20 },
+      { x: 0, y: 0, width: 20, height: 460 },
+      { x: 0, y: 0, width: 1240, height: 20 },
+      { x: 1220, y: 0, width: 20, height: 460 },
+      { x: 782, y: 69, width: 102, height: 24, angle: 30 }
+    ],
       sandTraps: [
-        {
-          x: 280,
-          y: 40,
-          width: 80,
-          height: 50
-        },
-        {
-          x: 60,
-          y: 160,
-          width: 90,
-          height: 40
-        },
-        {
-          x: 490,
-          y: 20,
-          width: 80,
-          height: 40
-        },
-        {
-          x: 640,
-          y: 320,
-          width: 110,
-          height: 60
-        }
-      ],
+      { x: 280, y: 40, width: 80, height: 50 },
+      { x: 60, y: 160, width: 90, height: 40 },
+      { x: 490, y: 30, width: 80, height: 40 },
+      { x: 640, y: 320, width: 110, height: 60 }
+    ],
       waterHazards: [
-        {
-          x: 550,
-          y: 120,
-          width: 180,
-          height: 80
-        },
-        {
-          x: 690,
-          y: 170,
-          width: 110,
-          height: 70
-        },
-        {
-          x: 580,
-          y: 90,
-          width: 100,
-          height: 50
-        },
-        {
-          x: 650,
-          y: 190,
-          width: 60,
-          height: 40
-        },
-        {
-          x: 760,
-          y: 200,
-          width: 60,
-          height: 60
-        },
-        {
-          x: 850,
-          y: 220,
-          width: 120,
-          height: 50
-        },
-        {
-          x: 780,
-          y: 180,
-          width: 120,
-          height: 60
-        },
-        {
-          x: 800,
-          y: 230,
-          width: 90,
-          height: 40
-        },
-        {
-          x: 590,
-          y: 190,
-          width: 100,
-          height: 30
-        },
-        {
-          x: 690,
-          y: 120,
-          width: 100,
-          height: 70
-        },
-        {
-          x: 770,
-          y: 150,
-          width: 90,
-          height: 50
-        },
-        {
-          x: 570,
-          y: 190,
-          width: 70,
-          height: 50
-        },
-        {
-          x: 510,
-          y: 200,
-          width: 80,
-          height: 70
-        },
-        {
-          x: 510,
-          y: 180,
-          width: 70,
-          height: 40
-        }
-      ],
+      { x: 550, y: 120, width: 180, height: 80 },
+      { x: 690, y: 170, width: 110, height: 70 },
+      { x: 580, y: 90, width: 100, height: 50 },
+      { x: 650, y: 190, width: 60, height: 40 },
+      { x: 760, y: 200, width: 60, height: 60 },
+      { x: 850, y: 220, width: 120, height: 50 },
+      { x: 780, y: 180, width: 120, height: 60 },
+      { x: 800, y: 230, width: 90, height: 40 },
+      { x: 590, y: 190, width: 100, height: 30 },
+      { x: 690, y: 120, width: 100, height: 70 },
+      { x: 770, y: 150, width: 90, height: 50 },
+      { x: 570, y: 190, width: 70, height: 50 },
+      { x: 510, y: 200, width: 80, height: 70 },
+      { x: 510, y: 180, width: 70, height: 40 },
+      { x: 530, y: 340, width: 60, height: 90 },
+      { x: 547, y: 382, width: 70, height: 50, angle: 30 },
+      { x: 570, y: 370, width: 200, height: 70 },
+      { x: 730, y: 360, width: 60, height: 80 },
+      { x: 770, y: 340, width: 60, height: 70 },
+      { x: 840, y: 370, width: 100, height: 50, angle: 120 }
+    ],
       accents: [
-        {
-          x: 40,
-          y: 40,
-          width: 70,
-          height: 30
-        },
-        {
-          x: 1060,
-          y: 10,
-          width: 110,
-          height: 130
-        }
-      ]
+      { x: 40, y: 40, width: 70, height: 30 },
+      { x: 1060, y: 50, width: 110, height: 130 }
+    ],
+      speedBoosts: []
     }
 ];
 

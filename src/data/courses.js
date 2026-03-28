@@ -1,282 +1,81 @@
 const courseCatalog = [
     {
-    id: "sandy-isle",
-    name: "Sandy Isle",
-    description: "Course featuring many places to get stuck in sand.",
-    width: 960,
-    height: 540,
-    tee: {
-        x: 137,
-        y: 411
-    },
-    hole: {
-        x: 853,
-        y: 75,
-        radius: 18
-    },
-    walls: [
-        {
-        x: 720,
-        y: 45,
-        width: 35,
-        height: 105
-        },
-        {
-        x: 745,
-        y: 220,
-        width: 120,
-        height: 25
-        },
-        {
-        x: 125,
-        y: 275,
-        width: 125,
-        height: 25
-        },
-        {
-        x: 325,
-        y: 250,
-        width: 25,
-        height: 150
-        },
-        {
-        x: 520,
-        y: 240,
-        width: 60,
-        height: 60
-        },
-        {
-        x: 125,
-        y: 125,
-        width: 30,
-        height: 105
-        },
-        {
-        x: 575,
-        y: 0,
-        width: 25,
-        height: 75
-        },
-        {
-        x: 630,
-        y: 430,
-        width: 40,
-        height: 110
-        }
+      id: "sandy-isle",
+      name: "Sandy Isle",
+      description: "Course featuring many places to get stuck in sand.",
+      width: 960,
+      height: 540,
+      tee: { x: 137, y: 411 },
+      hole: { x: 853, y: 75, radius: 18 },
+      walls: [
+      { x: 720, y: 45, width: 35, height: 105 },
+      { x: 690, y: 220, width: 120, height: 25 },
+      { x: 125, y: 275, width: 125, height: 25 },
+      { x: 325, y: 250, width: 25, height: 150 },
+      { x: 520, y: 240, width: 60, height: 60 },
+      { x: 125, y: 125, width: 30, height: 105 },
+      { x: 575, y: 0, width: 25, height: 75 },
+      { x: 630, y: 430, width: 40, height: 110 },
+      { x: 870, y: 290, width: 33, height: 123, angle: 30 }
     ],
-    sandTraps: [
-        {
-        x: 411,
-        y: 76,
-        width: 150,
-        height: 75
-        },
-        {
-        x: 470,
-        y: 405,
-        width: 120,
-        height: 50
-        },
-        {
-        x: 800,
-        y: 125,
-        width: 30,
-        height: 75
-        },
-        {
-        x: 205,
-        y: 465,
-        width: 115,
-        height: 55
-        },
-        {
-        x: 900,
-        y: 25,
-        width: 50,
-        height: 140
-        }
+      sandTraps: [
+      { x: 411, y: 76, width: 150, height: 75 },
+      { x: 470, y: 405, width: 120, height: 50 },
+      { x: 800, y: 125, width: 30, height: 75 },
+      { x: 205, y: 465, width: 115, height: 55 },
+      { x: 900, y: 25, width: 50, height: 140 },
+      { x: 10, y: 20, width: 110, height: 112 }
     ],
-    accents: [
-        {
-        x: 165,
-        y: 90,
-        width: 100,
-        height: 50
-        },
-        {
-        x: 720,
-        y: 425,
-        width: 110,
-        height: 45
-        },
-        {
-        x: 600,
-        y: 25,
-        width: 50,
-        height: 15
-        },
-        {
-        x: 100,
-        y: 375,
-        width: 75,
-        height: 70
-        },
-        {
-        x: 605,
-        y: 180,
-        width: 70,
-        height: 45
-        }
-    ]
+      waterHazards: [],
+      accents: [
+      { x: 170, y: 90, width: 100, height: 50 },
+      { x: 720, y: 425, width: 110, height: 45 },
+      { x: 600, y: 25, width: 50, height: 15 },
+      { x: 100, y: 375, width: 75, height: 70 },
+      { x: 605, y: 180, width: 70, height: 45 }
+    ],
+      speedBoosts: []
     },
     {
-    id: "water-world",
-    name: "Water World",
-    description: "A map with lots of water.",
-    width: 1080,
-    height: 450,
-    tee: {
-        x: 157,
-        y: 200
-    },
-    hole: {
-        x: 908,
-        y: 235,
-        radius: 18
-    },
-    walls: [
-        {
-        x: 775,
-        y: 50,
-        width: 175,
-        height: 25
-        },
-        {
-        x: 773,
-        y: 323,
-        width: 175,
-        height: 25
-        },
-        {
-        x: 40,
-        y: 100,
-        width: 30,
-        height: 200
-        },
-        {
-        x: 40,
-        y: 100,
-        width: 200,
-        height: 30
-        },
-        {
-        x: 40,
-        y: 270,
-        width: 200,
-        height: 30
-        },
-        {
-        x: 500,
-        y: 150,
-        width: 50,
-        height: 100
-        },
-        {
-        x: 400,
-        y: 320,
-        width: 40,
-        height: 40
-        },
-        {
-        x: 470,
-        y: 20,
-        width: 50,
-        height: 60
-        }
+      id: "water-world",
+      name: "Water World",
+      description: "A map with lots of water.",
+      width: 1080,
+      height: 450,
+      tee: { x: 157, y: 200 },
+      hole: { x: 910, y: 230, radius: 18 },
+      walls: [
+      { x: 775, y: 50, width: 175, height: 25 },
+      { x: 780, y: 350, width: 175, height: 25 },
+      { x: 40, y: 100, width: 30, height: 200 },
+      { x: 40, y: 100, width: 200, height: 30 },
+      { x: 40, y: 270, width: 200, height: 30 },
+      { x: 530, y: 180, width: 50, height: 100 },
+      { x: 501, y: 21, width: 50, height: 60 },
+      { x: 410, y: 330, width: 80, height: 29 }
     ],
-    sandTraps: [],
-    waterHazards: [
-        {
-        x: 955,
-        y: 155,
-        width: 65,
-        height: 145
-        },
-        {
-        x: 675,
-        y: 0,
-        width: 275,
-        height: 45
-        },
-        {
-        x: 350,
-        y: 50,
-        width: 100,
-        height: 100
-        },
-        {
-        x: 630,
-        y: 240,
-        width: 60,
-        height: 60
-        },
-        {
-        x: 440,
-        y: 330,
-        width: 110,
-        height: 70
-        },
-        {
-        x: 60,
-        y: 370,
-        width: 80,
-        height: 40
-        },
-        {
-        x: 60,
-        y: 40,
-        width: 130,
-        height: 30
-        },
-        {
-        x: 310,
-        y: 210,
-        width: 50,
-        height: 40
-        },
-        {
-        x: 250,
-        y: 340,
-        width: 140,
-        height: 70
-        },
-        {
-        x: 690,
-        y: 370,
-        width: 90,
-        height: 70
-        },
-        {
-        x: 630,
-        y: 80,
-        width: 90,
-        height: 70
-        },
-        {
-        x: 790,
-        y: 170,
-        width: 50,
-        height: 110
-        }
+      sandTraps: [],
+      waterHazards: [
+      { x: 955, y: 155, width: 65, height: 145 },
+      { x: 719, y: 1, width: 275, height: 45 },
+      { x: 300, y: 0, width: 100, height: 100 },
+      { x: 630, y: 170, width: 60, height: 60 },
+      { x: 60, y: 370, width: 80, height: 40 },
+      { x: 60, y: 40, width: 130, height: 30 },
+      { x: 250, y: 340, width: 140, height: 70 },
+      { x: 790, y: 180, width: 50, height: 110 },
+      { x: 590, y: 60, width: 135, height: 38 },
+      { x: 0, y: 0, width: 20, height: 450 },
+      { x: 10, y: 0, width: 1070, height: 20 },
+      { x: 1060, y: 10, width: 20, height: 440 },
+      { x: 0, y: 430, width: 1080, height: 20 },
+      { x: 550, y: 360, width: 160, height: 90 },
+      { x: 420, y: 180, width: 40, height: 90 }
     ],
-    accents: [
-        {
-        x: 860,
-        y: 180,
-        width: 90,
-        height: 100
-        }
-    ]
+      accents: [
+      { x: 860, y: 180, width: 90, height: 100 }
+    ],
+      speedBoosts: []
     },
     {
       id: "lagoon-link",
@@ -289,7 +88,6 @@ const courseCatalog = [
       walls: [
       { x: 390, y: 0, width: 30, height: 150 },
       { x: 220, y: 230, width: 30, height: 150 },
-      { x: 210, y: 70, width: 100, height: 30, angle: 30 },
       { x: 390, y: 210, width: 110, height: 30 },
       { x: 860, y: 0, width: 150, height: 50 },
       { x: 600, y: 220, width: 140, height: 30 },
@@ -301,11 +99,12 @@ const courseCatalog = [
       { x: 0, y: 0, width: 20, height: 460 },
       { x: 0, y: 0, width: 1240, height: 20 },
       { x: 1220, y: 0, width: 20, height: 460 },
-      { x: 782, y: 69, width: 102, height: 24, angle: 30 }
+      { x: 782, y: 69, width: 102, height: 24, angle: 30 },
+      { x: 120, y: 90, width: 34, height: 101, angle: 60 }
     ],
       sandTraps: [
       { x: 280, y: 40, width: 80, height: 50 },
-      { x: 60, y: 160, width: 90, height: 40 },
+      { x: 170, y: 110, width: 90, height: 40 },
       { x: 490, y: 30, width: 80, height: 40 },
       { x: 640, y: 320, width: 110, height: 60 }
     ],

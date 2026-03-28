@@ -44,6 +44,7 @@ function fillCourseRects(context, rects, radius = 0) {
 function drawSpeedBoosts(context, boosts) {
   boosts.forEach((boost) => {
     const strength = Math.min(3, Math.max(1, Math.round(Number(boost.strength) || 1)));
+    const boostLabel = ">".repeat(strength);
     const fillColors = ["#7ed957", "#f6c453", "#ff8b63"];
     const fillStyle = fillColors[strength - 1];
     const angle = getRectAngleRadians(boost);
@@ -60,26 +61,21 @@ function drawSpeedBoosts(context, boosts) {
     context.lineWidth = 2;
     context.strokeRect(0, 0, boost.width, boost.height);
 
-    const arrowCount = strength;
-    const laneHeight = boost.height / (arrowCount + 1);
-    context.strokeStyle = "rgba(12, 24, 18, 0.8)";
-    context.lineWidth = 3;
-    context.lineCap = "round";
-    context.lineJoin = "round";
+    let fontSize = Math.min(boost.height * 0.72, boost.width / Math.max(1.4, strength * 0.72));
+    fontSize = clamp(fontSize, 12, 44);
+    context.fillStyle = "rgba(12, 24, 18, 0.82)";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
 
-    for (let index = 0; index < arrowCount; index += 1) {
-      const y = laneHeight * (index + 1);
-      const startX = Math.max(8, boost.width * 0.2);
-      const endX = Math.min(boost.width - 10, boost.width * 0.8);
-
-      context.beginPath();
-      context.moveTo(startX, y);
-      context.lineTo(endX, y);
-      context.lineTo(endX - 10, y - 8);
-      context.moveTo(endX, y);
-      context.lineTo(endX - 10, y + 8);
-      context.stroke();
+    while (fontSize >= 12) {
+      context.font = `900 ${fontSize}px 'IBM Plex Mono', 'Avenir Next', sans-serif`;
+      if (context.measureText(boostLabel).width <= boost.width - 12) {
+        break;
+      }
+      fontSize -= 2;
     }
+
+    context.fillText(boostLabel, boost.width / 2, boost.height / 2 + fontSize * 0.04);
 
     context.restore();
   });

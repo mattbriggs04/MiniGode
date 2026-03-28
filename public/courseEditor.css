@@ -138,14 +138,17 @@
   background: var(--course-frame-bg);
   border: 1px solid var(--course-frame-border);
   box-shadow: var(--course-frame-shadow);
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
 }
 
 #course-editor-canvas {
   display: block;
-  width: 100%;
+  width: auto;
   height: auto;
-  max-height: min(72vh, 980px);
+  max-width: none;
+  max-height: none;
   border-radius: 18px;
   background: #173021;
   cursor: crosshair;
@@ -366,7 +369,7 @@ body.theme-dark .course-editor-count {
   }
 
   #course-editor-canvas {
-    max-height: 64vh;
+    max-width: none;
   }
 }
 
@@ -405,6 +408,6 @@ body.theme-dark .course-editor-count {
   }
 
   #course-editor-canvas {
-    width: 100%;
+    width: auto;
   }
 }

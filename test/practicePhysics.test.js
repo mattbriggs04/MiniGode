@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getCourseById } from "../src/data/courses.js";
+import { getCourseById, getCourseSummaries } from "../src/data/courses.js";
 import {
   BASE_FRICTION as clientBaseFriction,
   SAND_FRICTION as clientSandFriction,
@@ -19,9 +19,18 @@ import {
   getProgressPercent as getServerProgressPercent,
   simulateSwing as simulateServerSwing
 } from "../src/lib/physics.js";
+import { findCourseSinkPlan } from "../test-support/coursePlanning.js";
+
+function getReferenceCourse() {
+  const [courseSummary] = getCourseSummaries();
+  assert.ok(courseSummary, "Expected at least one course in the catalog.");
+  return getCourseById(courseSummary.id);
+}
 
 test("client practice physics matches server swing simulation helpers", () => {
-  const course = getCourseById("copper-canyon");
+  const course = getReferenceCourse();
+  const openingSwing = findCourseSinkPlan(course.id)?.[0];
+  assert.ok(openingSwing, `Expected a sink plan for ${course.id}.`);
   const serverSpawn = createServerSpawnBall(course);
   const clientSpawn = createClientSpawnBall(course);
 
@@ -32,8 +41,8 @@ test("client practice physics matches server swing simulation helpers", () => {
   const swingInput = {
     course,
     ball: serverSpawn,
-    angle: -0.62,
-    power: 0.71
+    angle: openingSwing.angle,
+    power: openingSwing.power
   };
 
   assert.deepEqual(simulateClientSwing(swingInput), simulateServerSwing(swingInput));

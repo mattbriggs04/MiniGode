@@ -6,6 +6,11 @@ export const STOP_SPEED = 7;
 export const MAX_SPEED = 920;
 export const SIMULATION_STEPS = 2600;
 export const TIME_STEP = 1 / 120;
+export const SPEED_BOOST_ACCELERATION = {
+  1: 90,
+  2: 160,
+  3: 240
+};
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -15,12 +20,52 @@ function distance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function getRectAngleRadians(rect) {
+  return ((Number(rect?.angle) || 0) * Math.PI) / 180;
+}
+
+function worldToRectSpace(point, rect) {
+  const angle = getRectAngleRadians(rect);
+  const dx = point.x - rect.x;
+  const dy = point.y - rect.y;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: dx * cos + dy * sin,
+    y: -dx * sin + dy * cos
+  };
+}
+
+function rectToWorldSpace(point, rect) {
+  const angle = getRectAngleRadians(rect);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: rect.x + point.x * cos - point.y * sin,
+    y: rect.y + point.x * sin + point.y * cos
+  };
+}
+
+function vectorRectToWorld(vector, rect) {
+  const angle = getRectAngleRadians(rect);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: vector.x * cos - vector.y * sin,
+    y: vector.x * sin + vector.y * cos
+  };
+}
+
 function isInsideRect(point, rect) {
+  const localPoint = worldToRectSpace(point, rect);
   return (
-    point.x >= rect.x &&
-    point.x <= rect.x + rect.width &&
-    point.y >= rect.y &&
-    point.y <= rect.y + rect.height
+    localPoint.x >= 0 &&
+    localPoint.x <= rect.width &&
+    localPoint.y >= 0 &&
+    localPoint.y <= rect.height
   );
 }
 
@@ -59,10 +104,11 @@ function resolveBoundaryCollision(state, course) {
 }
 
 function resolveRectCollision(state, rect) {
-  const closestX = clamp(state.x, rect.x, rect.x + rect.width);
-  const closestY = clamp(state.y, rect.y, rect.y + rect.height);
-  const deltaX = state.x - closestX;
-  const deltaY = state.y - closestY;
+  const localBall = worldToRectSpace(state, rect);
+  const closestX = clamp(localBall.x, 0, rect.width);
+  const closestY = clamp(localBall.y, 0, rect.height);
+  const deltaX = localBall.x - closestX;
+  const deltaY = localBall.y - closestY;
   const distanceSquared = deltaX * deltaX + deltaY * deltaY;
 
   if (distanceSquared >= BALL_RADIUS * BALL_RADIUS) {
@@ -71,42 +117,61 @@ function resolveRectCollision(state, rect) {
 
   if (distanceSquared === 0) {
     const distances = [
-      { axis: "left", amount: Math.abs(state.x - rect.x) },
-      { axis: "right", amount: Math.abs(rect.x + rect.width - state.x) },
-      { axis: "top", amount: Math.abs(state.y - rect.y) },
-      { axis: "bottom", amount: Math.abs(rect.y + rect.height - state.y) }
+      { axis: "left", amount: Math.abs(localBall.x) },
+      { axis: "right", amount: Math.abs(rect.width - localBall.x) },
+      { axis: "top", amount: Math.abs(localBall.y) },
+      { axis: "bottom", amount: Math.abs(rect.height - localBall.y) }
     ];
     const nearest = distances.sort((a, b) => a.amount - b.amount)[0];
+    let resolvedBall = localBall;
+    let normalLocal = { x: 0, y: 0 };
 
     if (nearest.axis === "left") {
-      state.x = rect.x - BALL_RADIUS;
-      state.vx = -Math.abs(state.vx) * WALL_RESTITUTION;
+      resolvedBall = { x: -BALL_RADIUS, y: localBall.y };
+      normalLocal = { x: -1, y: 0 };
     } else if (nearest.axis === "right") {
-      state.x = rect.x + rect.width + BALL_RADIUS;
-      state.vx = Math.abs(state.vx) * WALL_RESTITUTION;
+      resolvedBall = { x: rect.width + BALL_RADIUS, y: localBall.y };
+      normalLocal = { x: 1, y: 0 };
     } else if (nearest.axis === "top") {
-      state.y = rect.y - BALL_RADIUS;
-      state.vy = -Math.abs(state.vy) * WALL_RESTITUTION;
+      resolvedBall = { x: localBall.x, y: -BALL_RADIUS };
+      normalLocal = { x: 0, y: -1 };
     } else {
-      state.y = rect.y + rect.height + BALL_RADIUS;
-      state.vy = Math.abs(state.vy) * WALL_RESTITUTION;
+      resolvedBall = { x: localBall.x, y: rect.height + BALL_RADIUS };
+      normalLocal = { x: 0, y: 1 };
+    }
+
+    const resolvedWorld = rectToWorldSpace(resolvedBall, rect);
+    const normalWorld = vectorRectToWorld(normalLocal, rect);
+    const velocityDot = state.vx * normalWorld.x + state.vy * normalWorld.y;
+    state.x = resolvedWorld.x;
+    state.y = resolvedWorld.y;
+    if (velocityDot < 0) {
+      state.vx -= (1 + WALL_RESTITUTION) * velocityDot * normalWorld.x;
+      state.vy -= (1 + WALL_RESTITUTION) * velocityDot * normalWorld.y;
     }
 
     return;
   }
 
   const collisionDistance = Math.sqrt(distanceSquared);
-  const normalX = deltaX / collisionDistance;
-  const normalY = deltaY / collisionDistance;
+  const normalLocal = {
+    x: deltaX / collisionDistance,
+    y: deltaY / collisionDistance
+  };
   const overlap = BALL_RADIUS - collisionDistance;
+  const resolvedBall = {
+    x: localBall.x + normalLocal.x * overlap,
+    y: localBall.y + normalLocal.y * overlap
+  };
+  const resolvedWorld = rectToWorldSpace(resolvedBall, rect);
+  const normalWorld = vectorRectToWorld(normalLocal, rect);
+  const velocityDot = state.vx * normalWorld.x + state.vy * normalWorld.y;
 
-  state.x += normalX * overlap;
-  state.y += normalY * overlap;
-
-  if (Math.abs(normalX) > Math.abs(normalY)) {
-    state.vx = -state.vx * WALL_RESTITUTION;
-  } else {
-    state.vy = -state.vy * WALL_RESTITUTION;
+  state.x = resolvedWorld.x;
+  state.y = resolvedWorld.y;
+  if (velocityDot < 0) {
+    state.vx -= (1 + WALL_RESTITUTION) * velocityDot * normalWorld.x;
+    state.vy -= (1 + WALL_RESTITUTION) * velocityDot * normalWorld.y;
   }
 }
 
@@ -154,6 +219,7 @@ export function simulateSwing({ course, ball, angle, power }) {
   const walls = getCourseRects(course, "walls");
   const sandTraps = getCourseRects(course, "sandTraps");
   const waterHazards = getCourseRects(course, "waterHazards", "water");
+  const speedBoosts = getCourseRects(course, "speedBoosts");
   const state = {
     x: ball.x,
     y: ball.y,
@@ -188,6 +254,16 @@ export function simulateSwing({ course, ball, angle, power }) {
         },
         hazard: "water"
       };
+    }
+
+    const activeBoost = speedBoosts.find((boost) => isInsideRect(state, boost));
+    if (activeBoost) {
+      const boostAcceleration =
+        SPEED_BOOST_ACCELERATION[Math.min(3, Math.max(1, Math.round(Number(activeBoost.strength) || 1)))] ??
+        SPEED_BOOST_ACCELERATION[1];
+      const boostAngle = getRectAngleRadians(activeBoost);
+      state.vx += Math.cos(boostAngle) * boostAcceleration * TIME_STEP;
+      state.vy += Math.sin(boostAngle) * boostAcceleration * TIME_STEP;
     }
 
     const friction = sandTraps.some((trap) => isInsideRect(state, trap))

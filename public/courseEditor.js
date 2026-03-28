@@ -11,18 +11,20 @@ const MAX_COURSE_WIDTH = 2400;
 const MAX_COURSE_HEIGHT = 1800;
 const COURSE_DIMENSION_STEP = 10;
 const GRID_SNAP_STEP = 10; // Adjust this to change the editor's snap/grid spacing.
+const ROTATION_STEP = 30;
 const COPY_BUTTON_FEEDBACK_MS = 1000;
 const GRID_MAJOR_STEP = GRID_SNAP_STEP * 5;
 const DEFAULT_HOLE_RADIUS = 18;
 const MIN_HOLE_RADIUS = 10;
 const MAX_HOLE_RADIUS = 60;
-const SELECTABLE_RECT_TYPES = ["walls", "sandTraps", "waterHazards", "accents"];
+const SELECTABLE_RECT_TYPES = ["walls", "sandTraps", "waterHazards", "accents", "speedBoosts"];
 const TOOL_DEFINITIONS = [
   { id: "select", label: "Select", shortcut: "V", description: "Select and move existing objects." },
   { id: "wall", label: "Wall", shortcut: "W", description: "Drag to create a collision wall rectangle." },
   { id: "sand", label: "Sand", shortcut: "S", description: "Drag to create a sand trap rectangle." },
   { id: "water", label: "Water", shortcut: "R", description: "Drag to create a water hazard that resets the ball." },
   { id: "accent", label: "Accent", shortcut: "A", description: "Drag to create a decorative accent rectangle." },
+  { id: "boost", label: "Boost", shortcut: "B", description: "Drag to create a directional speed boost." },
   { id: "tee", label: "Tee", shortcut: "T", description: "Click to place the tee location." },
   { id: "hole", label: "Hole", shortcut: "H", description: "Click to place the hole center." }
 ];
@@ -31,19 +33,22 @@ const RECT_TOOL_TO_FIELD = {
   wall: "walls",
   sand: "sandTraps",
   water: "waterHazards",
-  accent: "accents"
+  accent: "accents",
+  boost: "speedBoosts"
 };
 const RECT_FIELD_LABELS = {
   walls: "Wall",
   sandTraps: "Sand trap",
   waterHazards: "Water",
-  accents: "Accent"
+  accents: "Accent",
+  speedBoosts: "Speed boost"
 };
 const RECT_FIELD_PREVIEW_COLORS = {
   walls: "rgba(255, 107, 74, 0.95)",
   sandTraps: "rgba(255, 214, 102, 0.95)",
   waterHazards: "rgba(73, 171, 234, 0.95)",
-  accents: "rgba(96, 255, 178, 0.95)"
+  accents: "rgba(96, 255, 178, 0.95)",
+  speedBoosts: "rgba(126, 217, 87, 0.95)"
 };
 
 const state = {
@@ -51,6 +56,7 @@ const state = {
   sourceCourseId: null,
   course: createBlankCourse(),
   selectedTool: "select",
+  toolAngle: 0,
   selectedTarget: null,
   interaction: null,
   pointerWorld: null,
@@ -126,7 +132,8 @@ function createBlankCourse() {
     walls: [],
     sandTraps: [],
     waterHazards: [],
-    accents: []
+    accents: [],
+    speedBoosts: []
   });
 }
 
@@ -142,25 +149,112 @@ function normalizePoint(point, width, height, padding = 0, fallback = { x: paddi
   };
 }
 
+function normalizeAngleDegrees(value) {
+  const angle = Number(value);
+  if (!Number.isFinite(angle)) {
+    return 0;
+  }
+
+  const snappedAngle = Math.round(angle / ROTATION_STEP) * ROTATION_STEP;
+  return ((snappedAngle % 360) + 360) % 360;
+}
+
+function rotateVector(vector, angleDegrees) {
+  const angle = (angleDegrees * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: vector.x * cos - vector.y * sin,
+    y: vector.x * sin + vector.y * cos
+  };
+}
+
+function getRectCorners(rect) {
+  const corners = [
+    { x: 0, y: 0 },
+    { x: rect.width, y: 0 },
+    { x: rect.width, y: rect.height },
+    { x: 0, y: rect.height }
+  ];
+
+  return corners.map((corner) => {
+    const rotated = rotateVector(corner, rect.angle ?? 0);
+    return {
+      x: rect.x + rotated.x,
+      y: rect.y + rotated.y
+    };
+  });
+}
+
+function clampRotatedRect(rect, courseWidth, courseHeight) {
+  const corners = getRectCorners(rect);
+  const minX = Math.min(...corners.map((corner) => corner.x));
+  const maxX = Math.max(...corners.map((corner) => corner.x));
+  const minY = Math.min(...corners.map((corner) => corner.y));
+  const maxY = Math.max(...corners.map((corner) => corner.y));
+
+  const shiftX = minX < 0 ? -minX : maxX > courseWidth ? courseWidth - maxX : 0;
+  const shiftY = minY < 0 ? -minY : maxY > courseHeight ? courseHeight - maxY : 0;
+
+  return {
+    ...rect,
+    x: roundCoordinate(rect.x + shiftX),
+    y: roundCoordinate(rect.y + shiftY)
+  };
+}
+
+function normalizeStrength(value) {
+  return clamp(Math.round(Number(value) || 1), 1, 3);
+}
+
 function normalizeRect(rect, courseWidth, courseHeight) {
   const rawX = Number(rect?.x) || 0;
   const rawY = Number(rect?.y) || 0;
   const rawWidth = Number(rect?.width) || 0;
   const rawHeight = Number(rect?.height) || 0;
-  const minX = Math.min(rawX, rawX + rawWidth);
-  const minY = Math.min(rawY, rawY + rawHeight);
-  const maxX = Math.max(rawX, rawX + rawWidth);
-  const maxY = Math.max(rawY, rawY + rawHeight);
-  const x = clamp(roundCoordinate(minX), 0, courseWidth);
-  const y = clamp(roundCoordinate(minY), 0, courseHeight);
-  const width = clamp(roundCoordinate(maxX - minX), 0, courseWidth - x);
-  const height = clamp(roundCoordinate(maxY - minY), 0, courseHeight - y);
+  const x = clamp(roundCoordinate(rawX), 0, courseWidth);
+  const y = clamp(roundCoordinate(rawY), 0, courseHeight);
+  const width = clamp(roundCoordinate(Math.abs(rawWidth)), 0, courseWidth);
+  const height = clamp(roundCoordinate(Math.abs(rawHeight)), 0, courseHeight);
 
   if (width < MIN_RECT_SIZE || height < MIN_RECT_SIZE) {
     return null;
   }
 
-  return { x, y, width, height };
+  return clampRotatedRect(
+    {
+      x,
+      y,
+      width,
+      height,
+      angle: normalizeAngleDegrees(rect?.angle),
+      ...(rect?.strength !== undefined ? { strength: normalizeStrength(rect.strength) } : {})
+    },
+    courseWidth,
+    courseHeight
+  );
+}
+
+function buildRectFromDrag(start, current, angleDegrees) {
+  const delta = {
+    x: current.x - start.x,
+    y: current.y - start.y
+  };
+  const localDelta = rotateVector(delta, -angleDegrees);
+  const localOrigin = {
+    x: Math.min(0, localDelta.x),
+    y: Math.min(0, localDelta.y)
+  };
+  const worldOriginOffset = rotateVector(localOrigin, angleDegrees);
+
+  return {
+    x: start.x + worldOriginOffset.x,
+    y: start.y + worldOriginOffset.y,
+    width: Math.abs(localDelta.x),
+    height: Math.abs(localDelta.y),
+    angle: angleDegrees
+  };
 }
 
 function normalizeCourse(rawCourse) {
@@ -199,6 +293,9 @@ function normalizeCourse(rawCourse) {
       : [],
     accents: Array.isArray(rawCourse?.accents)
       ? rawCourse.accents.map((rect) => normalizeRect(rect, width, height)).filter(Boolean)
+      : [],
+    speedBoosts: Array.isArray(rawCourse?.speedBoosts)
+      ? rawCourse.speedBoosts.map((rect) => normalizeRect(rect, width, height)).filter(Boolean)
       : []
   };
 }
@@ -230,12 +327,57 @@ function getDraggedCoordinate(value, offset, min, max) {
   return clamp(alignedValue, min, max);
 }
 
+function formatInlineCourseObject(value) {
+  if (Array.isArray(value)) {
+    if (!value.length) {
+      return "[]";
+    }
+
+    return `[\n${value.map((item) => `  ${formatInlineCourseObject(item)}`).join(",\n")}\n]`;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([key, entryValue]) => {
+      if (entryValue === undefined) {
+        return false;
+      }
+
+      if (key === "angle" && entryValue === 0) {
+        return false;
+      }
+
+      return true;
+    });
+    return `{ ${entries.map(([key, entryValue]) => `${key}: ${JSON.stringify(entryValue)}`).join(", ")} }`
+      .replace(/"([A-Za-z_$][\w$]*)":/g, "$1:");
+  }
+
+  return JSON.stringify(value);
+}
+
 function formatCourseObject(course) {
-  return JSON.stringify(course, null, 2).replace(/"([A-Za-z_$][\w$]*)":/g, "$1:");
+  const sections = [
+    `id: ${JSON.stringify(course.id)}`,
+    `name: ${JSON.stringify(course.name)}`,
+    `description: ${JSON.stringify(course.description)}`,
+    `width: ${course.width}`,
+    `height: ${course.height}`,
+    `tee: ${formatInlineCourseObject(course.tee)}`,
+    `hole: ${formatInlineCourseObject(course.hole)}`,
+    `walls: ${formatInlineCourseObject(course.walls)}`,
+    `sandTraps: ${formatInlineCourseObject(course.sandTraps)}`,
+    `waterHazards: ${formatInlineCourseObject(course.waterHazards)}`,
+    `accents: ${formatInlineCourseObject(course.accents)}`,
+    `speedBoosts: ${formatInlineCourseObject(course.speedBoosts ?? [])}`
+  ];
+
+  return `{\n  ${sections.join(",\n  ")}\n}`;
 }
 
 function formatRectSummary(rect) {
-  return `${rect.x}, ${rect.y} - ${rect.width} x ${rect.height}`;
+  const angleLabel = rect.angle ? ` @ ${rect.angle}\u00b0` : "";
+  const strengthLabel = rect.strength ? ` • s${rect.strength}` : "";
+  return `${rect.x}, ${rect.y} - ${rect.width} x ${rect.height}${angleLabel}${strengthLabel}`;
 }
 
 function setStatus(message) {
@@ -371,12 +513,23 @@ function getWorldPoint(event) {
   return state.gridModeEnabled ? snapPoint(point, state.course) : point;
 }
 
+function pointToRectSpace(point, rect) {
+  return rotateVector(
+    {
+      x: point.x - rect.x,
+      y: point.y - rect.y
+    },
+    -(rect.angle ?? 0)
+  );
+}
+
 function isPointInsideRect(point, rect) {
+  const localPoint = pointToRectSpace(point, rect);
   return (
-    point.x >= rect.x &&
-    point.x <= rect.x + rect.width &&
-    point.y >= rect.y &&
-    point.y <= rect.y + rect.height
+    localPoint.x >= 0 &&
+    localPoint.x <= rect.width &&
+    localPoint.y >= 0 &&
+    localPoint.y <= rect.height
   );
 }
 
@@ -403,12 +556,16 @@ function hitTest(point) {
 }
 
 function clampRectPosition(rect, course) {
-  return {
-    x: clamp(roundCoordinate(rect.x), 0, course.width - rect.width),
-    y: clamp(roundCoordinate(rect.y), 0, course.height - rect.height),
-    width: rect.width,
-    height: rect.height
-  };
+  return clampRotatedRect(
+    {
+      ...rect,
+      x: roundCoordinate(rect.x),
+      y: roundCoordinate(rect.y),
+      angle: normalizeAngleDegrees(rect.angle)
+    },
+    course.width,
+    course.height
+  );
 }
 
 function describeSelectedTarget() {
@@ -473,6 +630,14 @@ function renderGridToggle() {
   elements.gridToggleButton.classList.toggle("is-active", state.gridModeEnabled);
   elements.gridToggleButton.textContent = state.gridModeEnabled ? "Grid On" : "Grid Off";
   elements.gridToggleButton.setAttribute("aria-pressed", state.gridModeEnabled ? "true" : "false");
+}
+
+function renderToolAngleButton() {
+  if (!elements.rotateToolButton) {
+    return;
+  }
+
+  elements.rotateToolButton.textContent = `Tool angle ${state.toolAngle}\u00b0`;
 }
 
 function renderObjectList() {
@@ -553,7 +718,7 @@ function renderSelectionPanel() {
     elements.selectionPanel.innerHTML = `
       <p class="course-editor-selection__empty">
         Select an existing item on the canvas, or choose a drawing tool to add a wall, sand trap, water hazard,
-        accent, tee, or hole.
+        accent, speed boost, tee, or hole.
       </p>
     `;
     return;
@@ -622,8 +787,23 @@ function renderSelectionPanel() {
         Height
         <input data-selection-field="height" type="number" min="${MIN_RECT_SIZE}" max="${state.course.height}" step="${coordinateStep}" value="${entity.height}">
       </label>
+      <label>
+        Angle
+        <input data-selection-field="angle" type="number" min="0" max="330" step="${ROTATION_STEP}" value="${entity.angle ?? 0}">
+      </label>
+      ${
+        state.selectedTarget.type === "speedBoosts"
+          ? `
+            <label>
+              Strength
+              <input data-selection-field="strength" type="number" min="1" max="3" step="1" value="${entity.strength ?? 1}">
+            </label>
+          `
+          : ""
+      }
     </div>
     <div class="course-editor-actions-row">
+      <button id="rotate-selected-btn" type="button" class="secondary">Rotate 30°</button>
       <button id="duplicate-selected-btn" type="button" class="secondary">Duplicate selected</button>
       <button id="delete-selected-btn" type="button" class="ghost-inline">Delete selected</button>
     </div>
@@ -664,6 +844,19 @@ function drawGridOverlay() {
   }
 }
 
+function drawRectOverlay(context, rect, { padding = 0, radius = 12 } = {}) {
+  context.save();
+  context.translate(rect.x, rect.y);
+  if (rect.angle) {
+    context.rotate((rect.angle * Math.PI) / 180);
+  }
+  context.beginPath();
+  context.roundRect(-padding, -padding, rect.width + padding * 2, rect.height + padding * 2, radius);
+  context.fill();
+  context.stroke();
+  context.restore();
+}
+
 function drawSelectionOverlay() {
   const context = renderer.context;
   context.save();
@@ -696,21 +889,17 @@ function drawSelectionOverlay() {
       context.fill();
       context.stroke();
     } else {
-      context.beginPath();
-      context.roundRect(entity.x - 4, entity.y - 4, entity.width + 8, entity.height + 8, 12);
-      context.fill();
-      context.stroke();
+      drawRectOverlay(context, entity, { padding: 4, radius: 12 });
     }
   }
 
   if (state.interaction?.type === "draw-rect") {
     const preview = normalizeRect(
-      {
-        x: state.interaction.start.x,
-        y: state.interaction.start.y,
-        width: state.interaction.current.x - state.interaction.start.x,
-        height: state.interaction.current.y - state.interaction.start.y
-      },
+      buildRectFromDrag(
+        state.interaction.start,
+        state.interaction.current,
+        state.interaction.angle ?? 0
+      ),
       state.course.width,
       state.course.height
     );
@@ -722,10 +911,7 @@ function drawSelectionOverlay() {
       context.strokeStyle = color;
       context.fillStyle = color.replace("0.95", "0.18");
       context.lineWidth = 3;
-      context.beginPath();
-      context.roundRect(preview.x, preview.y, preview.width, preview.height, 12);
-      context.fill();
-      context.stroke();
+      drawRectOverlay(context, preview, { padding: 0, radius: 12 });
     }
   }
 
@@ -757,6 +943,10 @@ function render() {
   syncCourseInputs();
   renderToolPalette();
   renderGridToggle();
+  renderToolAngleButton();
+  if (elements.duplicateSelectedToolbarButton) {
+    elements.duplicateSelectedToolbarButton.disabled = !Boolean(getSelectedRectCollectionName());
+  }
   renderSelectionPanel();
   renderObjectList();
   renderExport();
@@ -873,7 +1063,9 @@ function duplicateSelectedTarget() {
         x: original.x + 18,
         y: original.y + 18,
         width: original.width,
-        height: original.height
+        height: original.height,
+        angle: original.angle ?? 0,
+        ...(original.strength ? { strength: original.strength } : {})
       },
       draft
     );
@@ -882,6 +1074,41 @@ function duplicateSelectedTarget() {
 
   const nextIndex = state.course[collectionName].length - 1;
   selectTarget({ type: collectionName, index: nextIndex });
+}
+
+function rotateSelectedTarget() {
+  const collectionName = getSelectedRectCollectionName();
+  if (!collectionName || !state.selectedTarget) {
+    return;
+  }
+
+  const original = getSelectedEntity();
+  if (!original) {
+    return;
+  }
+
+  updateCourse((draft) => {
+    const rect = draft[collectionName]?.[state.selectedTarget.index];
+    if (!rect) {
+      return;
+    }
+
+    const currentAngle = normalizeAngleDegrees(rect.angle);
+    const centerOffset = rotateVector({ x: rect.width / 2, y: rect.height / 2 }, currentAngle);
+    const centerPoint = {
+      x: rect.x + centerOffset.x,
+      y: rect.y + centerOffset.y
+    };
+    const nextAngle = normalizeAngleDegrees(currentAngle + ROTATION_STEP);
+    const nextOriginOffset = rotateVector({ x: rect.width / 2, y: rect.height / 2 }, nextAngle);
+    rect.angle = nextAngle;
+    rect.x = centerPoint.x - nextOriginOffset.x;
+    rect.y = centerPoint.y - nextOriginOffset.y;
+    const clampedRect = clampRectPosition(rect, draft);
+    Object.assign(rect, clampedRect);
+  }, `${describeSelectedTarget()} rotated.`);
+
+  renderSelectionPanel();
 }
 
 function flashButtonLabel(button, temporaryLabel, durationMs = COPY_BUTTON_FEEDBACK_MS) {
@@ -951,6 +1178,7 @@ function startRectDraw(event, toolId, point) {
     type: "draw-rect",
     pointerId: event.pointerId,
     fieldName: RECT_TOOL_TO_FIELD[toolId],
+    angle: state.toolAngle,
     start: point,
     current: point
   };
@@ -1024,8 +1252,9 @@ function commitInteractionMove(point) {
         return;
       }
 
-      rect.x = getDraggedCoordinate(point.x, state.interaction.offsetX, 0, draft.width - rect.width);
-      rect.y = getDraggedCoordinate(point.y, state.interaction.offsetY, 0, draft.height - rect.height);
+      rect.x = getDraggedCoordinate(point.x, state.interaction.offsetX, -draft.width, draft.width * 2);
+      rect.y = getDraggedCoordinate(point.y, state.interaction.offsetY, -draft.height, draft.height * 2);
+      Object.assign(rect, clampRectPosition(rect, draft));
     }
   }, null, { persist: false, fullRender: false });
 }
@@ -1037,12 +1266,7 @@ function finishRectDraw() {
   }
 
   const preview = normalizeRect(
-    {
-      x: interaction.start.x,
-      y: interaction.start.y,
-      width: interaction.current.x - interaction.start.x,
-      height: interaction.current.y - interaction.start.y
-    },
+    buildRectFromDrag(interaction.start, interaction.current, interaction.angle ?? 0),
     state.course.width,
     state.course.height
   );
@@ -1050,6 +1274,10 @@ function finishRectDraw() {
   if (!preview) {
     setStatus("Drag farther to create a larger rectangle.");
     return;
+  }
+
+  if (interaction.fieldName === "speedBoosts") {
+    preview.strength = 1;
   }
 
   updateCourse((draft) => {
@@ -1205,6 +1433,11 @@ function onSelectionPanelClick(event) {
     return;
   }
 
+  if (event.target.id === "rotate-selected-btn") {
+    rotateSelectedTarget();
+    return;
+  }
+
   if (event.target.id === "duplicate-selected-btn") {
     duplicateSelectedTarget();
   }
@@ -1289,6 +1522,23 @@ function onWindowKeyDown(event) {
     return;
   }
 
+  if (event.key === "[" || event.key === "]") {
+    event.preventDefault();
+    state.toolAngle = normalizeAngleDegrees(
+      state.toolAngle + (event.key === "]" ? ROTATION_STEP : -ROTATION_STEP)
+    );
+    renderToolAngleButton();
+    drawEditor();
+    setStatus(`Tool angle set to ${state.toolAngle}\u00b0.`);
+    return;
+  }
+
+  if (event.key.toLowerCase() === "d" && getSelectedRectCollectionName()) {
+    event.preventDefault();
+    duplicateSelectedTarget();
+    return;
+  }
+
   if ((event.key === "Delete" || event.key === "Backspace") && getSelectedRectCollectionName()) {
     event.preventDefault();
     deleteSelectedTarget();
@@ -1302,6 +1552,8 @@ function bindElements() {
     loadCourseButton: document.getElementById("load-course-btn"),
     newCourseButton: document.getElementById("new-course-btn"),
     duplicateCourseButton: document.getElementById("duplicate-course-btn"),
+    duplicateSelectedToolbarButton: document.getElementById("duplicate-selected-toolbar-btn"),
+    rotateToolButton: document.getElementById("rotate-tool-btn"),
     gridToggleButton: document.getElementById("grid-toggle-btn"),
     resetCourseButton: document.getElementById("reset-course-btn"),
     toolPalette: document.getElementById("tool-palette"),
@@ -1358,6 +1610,17 @@ function bindEvents() {
       markAsSource: false,
       nextStatusMessage: "Duplicated current draft."
     });
+  });
+
+  elements.duplicateSelectedToolbarButton.addEventListener("click", () => {
+    duplicateSelectedTarget();
+  });
+
+  elements.rotateToolButton.addEventListener("click", () => {
+    state.toolAngle = normalizeAngleDegrees(state.toolAngle + ROTATION_STEP);
+    renderToolAngleButton();
+    drawEditor();
+    setStatus(`Tool angle set to ${state.toolAngle}\u00b0.`);
   });
 
   elements.resetCourseButton.addEventListener("click", () => {

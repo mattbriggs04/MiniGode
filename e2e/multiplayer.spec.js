@@ -1,6 +1,17 @@
 import { expect, test } from "@playwright/test";
+import { getCourseById, getCourseSummaries } from "../src/data/courses.js";
+import { createSpawnBall, simulateSwing } from "../src/lib/physics.js";
+import { findCourseSinkPlan } from "../test-support/coursePlanning.js";
 
 test.describe.configure({ mode: "serial" });
+
+const COURSE_SUMMARIES = getCourseSummaries();
+const DEFAULT_COURSE = COURSE_SUMMARIES[0];
+
+function requireCourseSummaries(count) {
+  expect(COURSE_SUMMARIES.length).toBeGreaterThanOrEqual(count);
+  return COURSE_SUMMARIES.slice(0, count);
+}
 
 async function createRoom(page, {
   name,
@@ -8,9 +19,12 @@ async function createRoom(page, {
   difficulty = "easy",
   questionSource = "local",
   courseCount = 1,
-  courseId = "sunset-switchbacks",
+  courseId = DEFAULT_COURSE?.id,
   courseIds = null
 }) {
+  const orderedCourseIds = courseIds ?? (courseId ? [courseId] : null);
+  const resolvedCourseCount = orderedCourseIds?.length ?? courseCount;
+
   await page.goto("/");
   await page.locator('#landing-tab-create').click();
   await page.locator('#create-form input[name="name"]').fill(name);
@@ -19,9 +33,8 @@ async function createRoom(page, {
     await page.locator("#create-difficulty").selectOption(difficulty);
   }
   await page.locator("#create-question-source").selectOption(questionSource);
-  await page.locator("#create-course-count").selectOption(String(courseCount));
+  await page.locator("#create-course-count").selectOption(String(resolvedCourseCount));
 
-  const orderedCourseIds = courseIds ?? (courseId ? [courseId] : null);
   if (orderedCourseIds) {
     await page.locator("#create-advanced-settings summary").click();
     for (const [index, selectedCourseId] of orderedCourseIds.entries()) {
@@ -58,11 +71,49 @@ async function openChat(page) {
   await expect(chatPanel).toBeVisible();
 }
 
-async function setRangeValue(page, selector, value) {
-  await page.locator(selector).evaluate((element, nextValue) => {
-    element.value = String(nextValue);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-  }, value);
+function worldToScreen(box, course, point) {
+  return {
+    x: box.x + (point.x / course.width) * box.width,
+    y: box.y + (point.y / course.height) * box.height
+  };
+}
+
+async function playCourseSinkPlan(page, courseId) {
+  const course = getCourseById(courseId);
+  const swings = findCourseSinkPlan(courseId);
+  expect(swings?.length).toBeTruthy();
+  let ball = createSpawnBall(course);
+
+  for (const swing of swings) {
+    const canvas = page.locator("#course-canvas");
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    if (!box) {
+      throw new Error("Expected course canvas bounds.");
+    }
+
+    const dragDistance = 260 * swing.power;
+    const startPoint = worldToScreen(box, course, ball);
+    const endPoint = worldToScreen(box, course, {
+      x: ball.x - Math.cos(swing.angle) * dragDistance,
+      y: ball.y - Math.sin(swing.angle) * dragDistance
+    });
+
+    await page.mouse.move(startPoint.x, startPoint.y);
+    await page.mouse.down();
+    await page.mouse.move(endPoint.x, endPoint.y, { steps: 8 });
+    await page.mouse.up();
+    await page.locator("#swing-btn").click();
+
+    const simulation = simulateSwing({
+      course,
+      ball,
+      angle: swing.angle,
+      power: swing.power
+    });
+    ball = simulation.ball;
+    await page.waitForTimeout(Math.max(800, simulation.path.length * 24) + 200);
+  }
 }
 
 test("guest refresh restores the room session and end-vote counts stay synced", async ({ browser }) => {
@@ -95,7 +146,8 @@ test("guest refresh restores the room session and end-vote counts stay synced", 
   }
 });
 
-test("first finisher becomes a spectator while other players keep the hole active", async ({ browser }) => {
+test("multi-course progression stays viewer-specific after the host clears course one", async ({ browser }) => {
+  const [firstCourse, secondCourse] = requireCourseSummaries(2);
   const hostContext = await browser.newContext();
   const guestContext = await browser.newContext();
   const hostPage = await hostContext.newPage();
@@ -104,7 +156,7 @@ test("first finisher becomes a spectator while other players keep the hole activ
   try {
     const roomCode = await createRoom(hostPage, {
       name: "dev$mode!",
-      courseId: "meadow-run"
+      courseIds: [firstCourse.id, secondCourse.id]
     });
     await joinRoom(guestPage, { roomCode, name: "Guest" });
 
@@ -116,17 +168,21 @@ test("first finisher becomes a spectator while other players keep the hole activ
 
     await hostPage.locator("#problem-to-golf-btn").click();
     await expect(hostPage.locator("#golf-screen")).toBeVisible();
+    await expect(hostPage.locator("#course-name")).toContainText(firstCourse.name);
+    await expect(hostPage.locator("#course-name")).toContainText("Course 1/2");
+    await expect(hostPage.locator("#golf-controls-panel")).toContainText("Drag back from the ball");
 
-    await setRangeValue(hostPage, "#angle-input", 359);
-    await setRangeValue(hostPage, "#power-input", 80);
-    await hostPage.locator("#swing-btn").click();
+    await playCourseSinkPlan(hostPage, firstCourse.id);
 
-    await expect(hostPage.locator("#golf-controls-panel")).toContainText("You set the pace.");
-    await expect(hostPage.locator("#golf-controls-panel")).toContainText("Watch the rest of the course");
-    await expect(hostPage.locator("#swing-btn")).toBeHidden();
+    await expect(hostPage.locator("#course-name")).toContainText(secondCourse.name);
+    await expect(hostPage.locator("#course-name")).toContainText("Course 2/2");
+    await expect(hostPage.locator("#golf-controls-panel")).toContainText("Viewing course 2/2");
 
-    await expect(guestPage.locator("#problem-panel")).toContainText("dev$mode! finished first.");
-    await expect(guestPage.locator("#problem-panel")).toContainText("Still playing");
+    await guestPage.locator("#problem-to-golf-btn").click();
+    await expect(guestPage.locator("#golf-screen")).toBeVisible();
+    await expect(guestPage.locator("#course-name")).toContainText(firstCourse.name);
+    await expect(guestPage.locator("#course-name")).toContainText("Course 1/2");
+    await expect(guestPage.locator("#golf-controls-panel")).toContainText("Viewing course 1/2");
   } finally {
     await Promise.all([hostContext.close(), guestContext.close()]);
   }
@@ -158,19 +214,20 @@ test("player-choice mode lets players switch between per-difficulty question tra
   await expect(page.locator("#problem-panel h2")).toHaveText(easyTitle);
 });
 
-test("multi-course rooms keep the selected course order", async ({ page }) => {
+test("multi-course rooms keep the selected course order in the lobby and on the course", async ({ page }) => {
+  const [firstCourse, secondCourse] = requireCourseSummaries(2);
+
   await createRoom(page, {
     name: "Host",
-    courseCount: 2,
-    courseIds: ["meadow-run", "copper-canyon"]
+    courseIds: [firstCourse.id, secondCourse.id]
   });
 
   await expect(page.locator("#waiting-settings")).toContainText("2 courses");
-  await expect(page.locator("#waiting-settings")).toContainText("1. Meadow Run");
-  await expect(page.locator("#waiting-settings")).toContainText("2. Copper Canyon");
+  await expect(page.locator("#waiting-settings")).toContainText(`1. ${firstCourse.name}`);
+  await expect(page.locator("#waiting-settings")).toContainText(`2. ${secondCourse.name}`);
 
   await page.locator("#start-game-btn").click();
   await page.locator("#problem-to-golf-btn").click();
-  await expect(page.locator("#course-name")).toContainText("Meadow Run");
+  await expect(page.locator("#course-name")).toContainText(firstCourse.name);
   await expect(page.locator("#course-name")).toContainText("Course 1/2");
 });

@@ -14,11 +14,74 @@ function getCourseRects(course, fieldName, legacyFieldName = null) {
   return [];
 }
 
-function fillRoundedRects(context, rects, radius) {
+function getRectAngleRadians(rect) {
+  return ((Number(rect?.angle) || 0) * Math.PI) / 180;
+}
+
+function drawRectPath(context, rect, radius = 0) {
+  const angle = getRectAngleRadians(rect);
+  context.save();
+  context.translate(rect.x, rect.y);
+  if (angle) {
+    context.rotate(angle);
+  }
+  context.beginPath();
+  if (radius > 0) {
+    context.roundRect(0, 0, rect.width, rect.height, radius);
+  } else {
+    context.rect(0, 0, rect.width, rect.height);
+  }
+  context.restore();
+}
+
+function fillCourseRects(context, rects, radius = 0) {
   rects.forEach((rect) => {
-    context.beginPath();
-    context.roundRect(rect.x, rect.y, rect.width, rect.height, radius);
+    drawRectPath(context, rect, radius);
     context.fill();
+  });
+}
+
+function drawSpeedBoosts(context, boosts) {
+  boosts.forEach((boost) => {
+    const strength = Math.min(3, Math.max(1, Math.round(Number(boost.strength) || 1)));
+    const fillColors = ["#7ed957", "#f6c453", "#ff8b63"];
+    const fillStyle = fillColors[strength - 1];
+    const angle = getRectAngleRadians(boost);
+
+    context.save();
+    context.translate(boost.x, boost.y);
+    if (angle) {
+      context.rotate(angle);
+    }
+
+    context.fillStyle = fillStyle;
+    context.fillRect(0, 0, boost.width, boost.height);
+    context.strokeStyle = "rgba(255, 255, 255, 0.72)";
+    context.lineWidth = 2;
+    context.strokeRect(0, 0, boost.width, boost.height);
+
+    const arrowCount = strength;
+    const laneHeight = boost.height / (arrowCount + 1);
+    context.strokeStyle = "rgba(12, 24, 18, 0.8)";
+    context.lineWidth = 3;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+
+    for (let index = 0; index < arrowCount; index += 1) {
+      const y = laneHeight * (index + 1);
+      const startX = Math.max(8, boost.width * 0.2);
+      const endX = Math.min(boost.width - 10, boost.width * 0.8);
+
+      context.beginPath();
+      context.moveTo(startX, y);
+      context.lineTo(endX, y);
+      context.lineTo(endX - 10, y - 8);
+      context.moveTo(endX, y);
+      context.lineTo(endX - 10, y + 8);
+      context.stroke();
+    }
+
+    context.restore();
   });
 }
 
@@ -51,6 +114,7 @@ export class CourseRenderer {
     this.devicePixelRatio = window.devicePixelRatio || 1;
     this.lastScene = null;
     this.animation = null;
+    this.animationQueue = [];
     this.lastDisplayWidth = 0;
     this.lastDisplayHeight = 0;
     this.worldScale = 1;
@@ -65,14 +129,16 @@ export class CourseRenderer {
   resize(course) {
     const frame = this.canvas.parentElement;
     const availableWidth = Math.floor(frame.clientWidth);
+    const availableHeight = Math.floor(frame.clientHeight || course.height);
 
-    if (!availableWidth) {
+    if (!availableWidth || !availableHeight) {
       return false;
     }
 
     this.devicePixelRatio = window.devicePixelRatio || 1;
-    const displayWidth = Math.min(availableWidth, course.width);
-    const displayHeight = Math.round(displayWidth * (course.height / course.width));
+    const scale = Math.min(1, Math.max(availableWidth / course.width, availableHeight / course.height));
+    const displayWidth = Math.max(1, Math.round(course.width * scale));
+    const displayHeight = Math.max(1, Math.round(course.height * scale));
 
     if (displayWidth !== this.lastDisplayWidth || displayHeight !== this.lastDisplayHeight) {
       this.canvas.style.width = `${displayWidth}px`;
@@ -95,17 +161,53 @@ export class CourseRenderer {
     };
   }
 
-  playSwing(path, onComplete = null) {
+  centerOnPoint(point, { smooth = false } = {}) {
+    const frame = this.canvas.parentElement;
+    if (!frame || !point) {
+      return;
+    }
+
+    const behavior = smooth ? "smooth" : "auto";
+    const targetLeft = point.x * this.worldScale - frame.clientWidth / 2;
+    const targetTop = point.y * this.worldScale - frame.clientHeight / 2;
+    frame.scrollTo({
+      left: Math.max(targetLeft, 0),
+      top: Math.max(targetTop, 0),
+      behavior
+    });
+  }
+
+  playSwing(path, { playerId = null, onComplete = null } = {}) {
     if (!path?.length) {
       onComplete?.();
       return;
     }
 
+    this.animationQueue.push({
+      path,
+      playerId,
+      onComplete
+    });
+
+    if (this.animation) {
+      return;
+    }
+
+    this.startNextAnimation();
+  }
+
+  startNextAnimation() {
+    const nextAnimation = this.animationQueue.shift();
+    if (!nextAnimation) {
+      return;
+    }
+
     this.animation = {
       startedAt: performance.now(),
-      duration: Math.max(800, path.length * 24),
-      path,
-      onComplete
+      duration: Math.max(800, nextAnimation.path.length * 24),
+      path: nextAnimation.path,
+      playerId: nextAnimation.playerId,
+      onComplete: nextAnimation.onComplete
     };
 
     const tick = (now) => {
@@ -121,6 +223,7 @@ export class CourseRenderer {
         this.animation = null;
         this.render(this.lastScene);
         completedAnimation?.onComplete?.();
+        this.startNextAnimation();
       }
     };
 
@@ -133,6 +236,7 @@ export class CourseRenderer {
     const sandTraps = getCourseRects(course, "sandTraps");
     const waterHazards = getCourseRects(course, "waterHazards", "water");
     const walls = getCourseRects(course, "walls");
+    const speedBoosts = getCourseRects(course, "speedBoosts");
     const gradient = context.createLinearGradient(0, 0, course.width, course.height);
     gradient.addColorStop(0, "#5b9a62");
     gradient.addColorStop(1, "#437a4b");
@@ -140,16 +244,18 @@ export class CourseRenderer {
     context.fillRect(0, 0, course.width, course.height);
 
     context.fillStyle = "rgba(255, 255, 255, 0.08)";
-    fillRoundedRects(context, accents, 22);
+    fillCourseRects(context, accents, 22);
 
     context.fillStyle = "#2e82d1";
-    fillRoundedRects(context, waterHazards, 28);
+    fillCourseRects(context, waterHazards, 28);
 
     context.fillStyle = "#d7b267";
-    fillRoundedRects(context, sandTraps, 28);
+    fillCourseRects(context, sandTraps, 28);
 
-    context.fillStyle = "#5d3a1a";
-    fillRoundedRects(context, walls, 12);
+    context.fillStyle = "#e5e8ec";
+    fillCourseRects(context, walls, 0);
+
+    drawSpeedBoosts(context, speedBoosts);
 
     context.fillStyle = "#111111";
     context.beginPath();
@@ -228,15 +334,14 @@ export class CourseRenderer {
     const animatedPoint = this.animation ? interpolatePoint(this.animation.path, animationProgress) : null;
 
     scene.players.forEach((player) => {
-      const showingAnimatedBall = player.id === scene.meId && Boolean(animatedPoint);
-      if (player.ball.sunk && !showingAnimatedBall) {
-        return;
-      }
+      const showingAnimatedBall = player.id === this.animation?.playerId && Boolean(animatedPoint);
 
       const ball =
         showingAnimatedBall
           ? { ...player.ball, ...animatedPoint }
-          : player.ball;
+          : player.ball.sunk
+            ? { ...player.ball, x: scene.course.hole.x, y: scene.course.hole.y }
+            : player.ball;
 
       context.fillStyle = player.color;
       context.beginPath();
@@ -246,6 +351,14 @@ export class CourseRenderer {
       context.lineWidth = 3;
       context.strokeStyle = player.id === scene.meId ? "#f8f1e5" : "rgba(248, 241, 229, 0.45)";
       context.stroke();
+
+      if (player.ball.sunk && !showingAnimatedBall) {
+        context.beginPath();
+        context.strokeStyle = "rgba(255, 255, 255, 0.92)";
+        context.lineWidth = 2;
+        context.arc(ball.x, ball.y, 15, 0, Math.PI * 2);
+        context.stroke();
+      }
 
       context.fillStyle = "rgba(255, 255, 255, 0.92)";
       context.font = "bold 14px 'IBM Plex Sans', 'Avenir Next', sans-serif";

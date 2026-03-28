@@ -23,7 +23,6 @@ const MAX_PLAYERS_PER_ROOM = 6;
 const MAX_CHAT_MESSAGES = 80;
 const PLAYER_DISCONNECT_GRACE_MS = 8000;
 const ROOM_POST_GAME_RETENTION_MS = 30_000;
-const HOLE_ADVANCE_DELAY_MS = 1800;
 const TIME_LIMIT_OPTIONS_MINUTES = [0, 5, 10, 15, 20, 30, 45, 60];
 const DIFFICULTY_MODES = ["fixed", "player-choice"];
 const DEFAULT_DIFFICULTY_MODE = "fixed";
@@ -34,8 +33,16 @@ const roomStore = new Map();
 const roomSubscribers = new Map();
 const roomExpirationTimers = new Map();
 const roomDeadlineTimers = new Map();
-const roomHoleAdvanceTimers = new Map();
 const PLAYER_COLORS = ["#ff7a59", "#4db6ac", "#ffd166", "#118ab2", "#ef476f", "#83c5be"];
+const WIN_REASON_LABELS = {
+  finished_first: "finished first",
+  lowest_total_strokes: "lowest total strokes",
+  solved_question_tiebreak: "solved-question tiebreak",
+  furthest_course: "furthest course reached",
+  closest_to_hole: "closest to the hole",
+  reached_course_first: "reached the course first",
+  time_expired: "led when time expired"
+};
 
 function createAppError(message, statusCode = 400) {
   const error = new Error(message);
@@ -268,30 +275,24 @@ function clearAllRoomDeadlineTimers() {
   roomDeadlineTimers.clear();
 }
 
-function cancelRoomHoleAdvance(roomCode) {
-  const timer = roomHoleAdvanceTimers.get(roomCode);
-  if (!timer) {
-    return;
-  }
-
-  clearTimeout(timer);
-  roomHoleAdvanceTimers.delete(roomCode);
-}
-
-function clearAllRoomHoleAdvanceTimers() {
-  roomHoleAdvanceTimers.forEach((timer) => clearTimeout(timer));
-  roomHoleAdvanceTimers.clear();
-}
-
 function createDifficultyLookup(createValue) {
   return Object.fromEntries(
     DIFFICULTIES.map((difficulty) => [difficulty, createValue(difficulty)])
   );
 }
 
+function createPlayerCourseState(course) {
+  return {
+    ball: createSpawnBall(course),
+    strokes: 0,
+    unlockedAt: null,
+    completedAt: null
+  };
+}
+
 function createPlayer(room, name) {
   const normalizedName = normalizeName(name);
-  const course = getCurrentCourse(room);
+  const firstCourse = getCourseById(room.courseIds[0]);
   const devModeEnabled = isDevModeName(normalizedName);
   const activeDifficulty =
     room.difficultyMode === "player-choice" ? room.defaultDifficulty : room.difficulty;
@@ -313,7 +314,10 @@ function createPlayer(room, name) {
       currentQuestionAssignment: 0,
       awaitingNextQuestion: false
     })),
-    ball: createSpawnBall(course),
+    activeCourseIndex: 0,
+    courseStates: room.courseIds.map((courseId, courseIndex) =>
+      courseIndex === 0 ? createPlayerCourseState(firstCourse) : null
+    ),
     holesCompleted: 0,
     finishPlace: null,
     finishedAt: null,
@@ -343,8 +347,8 @@ function ensureRoomStarted(room) {
 }
 
 function ensurePlayerCanStillPlay(player) {
-  if (player.ball.sunk) {
-    throw createAppError("This player has already finished the hole.", 409);
+  if (player.finishPlace) {
+    throw createAppError("This player has already finished the round.", 409);
   }
 }
 
@@ -352,36 +356,39 @@ function isFinalRoomStatus(status) {
   return status === "finished" || status === "ended" || status === "timed_out";
 }
 
+function syncRoomOutcome(room) {
+  const leaderboardEntries = getLeaderboardEntries(room);
+  const leaderIds = getLeaderIdsFromEntries(leaderboardEntries, room, comparePlayerStandings);
+  room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
+  room.winnerReason = room.winnerId
+    ? getWinnerReasonLabel(room, leaderboardEntries)
+    : null;
+}
+
 function syncRoomCompletionState(room) {
   room.finishOrder = room.finishOrder.filter((playerId) => room.players.has(playerId));
 
   if (room.status === "waiting" || room.status === "ended" || room.status === "timed_out") {
-    cancelRoomHoleAdvance(room.code);
-    const leaderIds = getLeaderIdsFromEntries(getLeaderboardEntries(room));
-    room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
+    syncRoomOutcome(room);
     return;
   }
 
-  const everyRemainingPlayerFinished =
-    room.playerOrder.length > 0 && room.finishOrder.length === room.playerOrder.length;
-  if (everyRemainingPlayerFinished) {
-    if (hasNextCourse(room)) {
-      room.status = "active";
-      room.completedAt = null;
-      scheduleHoleAdvance(room);
-    } else {
-      cancelRoomHoleAdvance(room.code);
-      room.status = "finished";
-      room.completedAt ??= Date.now();
-    }
+  const everyRemainingPlayerFinishedRound =
+    room.playerOrder.length > 0 &&
+    room.playerOrder.every((playerId) => {
+      const player = room.players.get(playerId);
+      return player ? hasPlayerCompletedRound(room, player) : false;
+    });
+
+  if (everyRemainingPlayerFinishedRound) {
+    room.status = "finished";
+    room.completedAt ??= Date.now();
   } else {
-    cancelRoomHoleAdvance(room.code);
     room.status = "active";
     room.completedAt = null;
   }
 
-  const leaderIds = getLeaderIdsFromEntries(getLeaderboardEntries(room));
-  room.winnerId = leaderIds.length === 1 ? leaderIds[0] : null;
+  syncRoomOutcome(room);
 }
 
 function closeRoomIfExpired(roomCode) {
@@ -424,10 +431,10 @@ function timeOutRoom(room) {
   }
 
   cancelRoomDeadline(room.code);
-  cancelRoomHoleAdvance(room.code);
   room.status = "timed_out";
   room.completedAt ??= Date.now();
   room.endVotePlayerIds.clear();
+  syncRoomOutcome(room);
   syncRoomExpiration(room);
   broadcastRoomState(room);
 }
@@ -504,82 +511,91 @@ function ensureUniquePlayerName(room, name) {
   }
 }
 
-function getCurrentCourseId(room) {
-  return room.courseIds[room.currentCourseIndex];
+function getPlayerCurrentCourseIndex(room, player) {
+  return clampCourseIndex(player.activeCourseIndex, room.courseIds.length);
 }
 
-function getCurrentCourse(room) {
-  return getCourseById(getCurrentCourseId(room));
+function clampCourseIndex(value, courseCount) {
+  const maxIndex = Math.max(courseCount - 1, 0);
+  return Math.min(maxIndex, Math.max(0, Number(value) || 0));
 }
 
-function hasNextCourse(room) {
-  return room.currentCourseIndex + 1 < room.courseIds.length;
+function getCourseByRoomIndex(room, courseIndex) {
+  return getCourseById(room.courseIds[clampCourseIndex(courseIndex, room.courseIds.length)]);
 }
 
-function resetPlayersForNextCourse(room) {
-  const course = getCurrentCourse(room);
+function ensurePlayerCourseState(room, player, courseIndex) {
+  const normalizedIndex = clampCourseIndex(courseIndex, room.courseIds.length);
+  if (!player.courseStates[normalizedIndex]) {
+    player.courseStates[normalizedIndex] = createPlayerCourseState(getCourseByRoomIndex(room, normalizedIndex));
+  }
 
-  room.playerOrder.forEach((playerId) => {
-    const player = room.players.get(playerId);
-    if (!player) {
-      return;
-    }
-
-    player.ball = createSpawnBall(course);
-    player.currentHoleStrokes = 0;
-    player.finishPlace = null;
-    player.finishedAt = null;
-  });
+  return player.courseStates[normalizedIndex];
 }
 
-function advanceRoomToNextCourse(room) {
-  cancelRoomHoleAdvance(room.code);
-  if (!hasNextCourse(room)) {
+function getPlayerCurrentCourse(room, player) {
+  return getCourseByRoomIndex(room, getPlayerCurrentCourseIndex(room, player));
+}
+
+function getPlayerCurrentCourseState(room, player) {
+  return ensurePlayerCourseState(room, player, getPlayerCurrentCourseIndex(room, player));
+}
+
+function getPlayerCourseStateSummary(room, player, courseIndex) {
+  if (courseIndex < 0 || courseIndex >= room.courseIds.length) {
+    return null;
+  }
+
+  const courseState = player.courseStates[courseIndex];
+  if (!courseState) {
+    return {
+      courseIndex,
+      courseNumber: courseIndex + 1,
+      courseId: room.courseIds[courseIndex],
+      unlocked: false,
+      completed: false,
+      ball: null,
+      strokes: 0,
+      distanceToHole: null,
+      progressPercent: null,
+      unlockedAt: null,
+      completedAt: null
+    };
+  }
+
+  const course = getCourseByRoomIndex(room, courseIndex);
+  return {
+    courseIndex,
+    courseNumber: courseIndex + 1,
+    courseId: room.courseIds[courseIndex],
+    unlocked: true,
+    completed: courseState.completedAt !== null,
+    ball: courseState.ball,
+    strokes: courseState.strokes,
+    distanceToHole: getDistanceToHole(course, courseState.ball),
+    progressPercent: courseState.ball.sunk ? 100 : getProgressPercent(course, courseState.ball),
+    unlockedAt: courseState.unlockedAt,
+    completedAt: courseState.completedAt
+  };
+}
+
+function hasPlayerCompletedRound(room, player) {
+  return player.holesCompleted >= room.courseIds.length;
+}
+
+function hasPlayerNextCourse(room, player) {
+  return getPlayerCurrentCourseIndex(room, player) + 1 < room.courseIds.length;
+}
+
+function unlockNextCourseForPlayer(room, player, unlockedAt = Date.now()) {
+  if (!hasPlayerNextCourse(room, player)) {
     return false;
   }
 
-  room.currentCourseIndex += 1;
-  room.finishOrder = [];
-  room.status = "active";
-  room.completedAt = null;
-  resetPlayersForNextCourse(room);
+  player.activeCourseIndex += 1;
+  const nextCourseState = ensurePlayerCourseState(room, player, player.activeCourseIndex);
+  nextCourseState.unlockedAt ??= unlockedAt;
   return true;
-}
-
-function scheduleHoleAdvance(room) {
-  cancelRoomHoleAdvance(room.code);
-
-  if (room.status !== "active" || !hasNextCourse(room)) {
-    return;
-  }
-
-  const everyRemainingPlayerFinished =
-    room.playerOrder.length > 0 && room.finishOrder.length === room.playerOrder.length;
-  if (!everyRemainingPlayerFinished) {
-    return;
-  }
-
-  const timer = setTimeout(() => {
-    roomHoleAdvanceTimers.delete(room.code);
-    const latestRoom = roomStore.get(room.code);
-    if (!latestRoom || latestRoom.status !== "active") {
-      return;
-    }
-
-    const everyoneStillFinished =
-      latestRoom.playerOrder.length > 0 && latestRoom.finishOrder.length === latestRoom.playerOrder.length;
-    if (!everyoneStillFinished || !hasNextCourse(latestRoom)) {
-      return;
-    }
-
-    advanceRoomToNextCourse(latestRoom);
-    syncRoomCompletionState(latestRoom);
-    syncRoomDeadline(latestRoom);
-    syncRoomExpiration(latestRoom);
-    broadcastRoomState(latestRoom);
-  }, HOLE_ADVANCE_DELAY_MS);
-
-  roomHoleAdvanceTimers.set(room.code, timer);
 }
 
 function getSelectableDifficultyForPlayer(room, difficulty) {
@@ -652,54 +668,63 @@ function ensurePlayerHasQuestionForDifficulty(room, player, difficulty = getPlay
   return questionState;
 }
 
-function serializePlayer(room, player, metrics = null) {
-  const course = getCurrentCourse(room);
-  const solvedCount = player.solvedQuestionIds.length;
-  const distanceToHole = metrics?.distanceToHole ?? getDistanceToHole(course, player.ball);
-  const progressPercent = metrics?.progressPercent ?? getProgressPercent(course, player.ball);
-  return {
-    id: player.id,
-    name: player.name,
-    color: player.color,
-    strokes: player.strokes,
-    currentHoleStrokes: player.currentHoleStrokes,
-    swingCredits: getDisplayedSwingCredits(player),
-    solvedCount,
-    ball: player.ball,
-    finishPlace: player.finishPlace,
-    finishedAt: player.finishedAt,
-    holesCompleted: player.holesCompleted,
-    holesTotal: room.courseIds.length,
-    distanceToHole,
-    progressPercent,
-    leaderboardRank: metrics?.leaderboardRank ?? null
-  };
+function getSolvedCountsByDifficulty(player) {
+  return player.solvedQuestionIds.reduce((counts, questionId) => {
+    const question = getQuestionById(questionId);
+    counts[question.difficulty] += 1;
+    return counts;
+  }, createDifficultyLookup(() => 0));
 }
 
 function getPlayerStandingMetrics(room, player) {
-  const course = getCurrentCourse(room);
+  const activeCourseIndex = getPlayerCurrentCourseIndex(room, player);
+  const activeCourse = getPlayerCurrentCourse(room, player);
+  const activeCourseState = getPlayerCurrentCourseState(room, player);
+  const solvedCountsByDifficulty = getSolvedCountsByDifficulty(player);
+  const roundComplete = hasPlayerCompletedRound(room, player);
+
   return {
     holesCompleted: player.holesCompleted,
     holesTotal: room.courseIds.length,
+    activeCourseIndex,
+    activeCourseNumber: activeCourseIndex + 1,
+    activeCourseId: room.courseIds[activeCourseIndex],
+    activeCourseUnlockedAt: activeCourseState.unlockedAt ?? player.joinedAt,
+    roundComplete,
     finishPlace: player.finishPlace,
-    sunk: player.ball.sunk,
-    distanceToHole: getDistanceToHole(course, player.ball),
-    progressPercent: getProgressPercent(course, player.ball),
+    finishedAt: player.finishedAt,
+    ball: activeCourseState.ball,
+    distanceToHole: roundComplete ? 0 : getDistanceToHole(activeCourse, activeCourseState.ball),
+    progressPercent: roundComplete ? 100 : getProgressPercent(activeCourse, activeCourseState.ball),
     solvedCount: player.solvedQuestionIds.length,
-    strokes: player.strokes
+    solvedCountsByDifficulty,
+    strokes: player.strokes,
+    currentHoleStrokes: activeCourseState.strokes
   };
 }
 
-function comparePlayerStandings(left, right) {
+function compareRaceLeaderMetrics(left, right) {
   if (left.holesCompleted !== right.holesCompleted) {
     return right.holesCompleted - left.holesCompleted;
   }
 
-  const allCoursesCompleted =
-    left.holesTotal > 1 &&
-    left.holesCompleted === left.holesTotal &&
-    right.holesCompleted === right.holesTotal;
-  if (allCoursesCompleted) {
+  if (left.distanceToHole !== right.distanceToHole) {
+    return left.distanceToHole - right.distanceToHole;
+  }
+
+  return 0;
+}
+
+function compareCompletedRoundMetrics(left, right, room) {
+  if (room.courseIds.length === 1) {
+    if (left.finishedAt !== right.finishedAt) {
+      return left.finishedAt - right.finishedAt;
+    }
+
+    return 0;
+  }
+
+  if (room.status === "finished") {
     if (left.strokes !== right.strokes) {
       return left.strokes - right.strokes;
     }
@@ -711,19 +736,8 @@ function comparePlayerStandings(left, right) {
     return 0;
   }
 
-  if (left.finishPlace && right.finishPlace && left.finishPlace !== right.finishPlace) {
-    return left.finishPlace - right.finishPlace;
-  }
-
-  if (left.sunk && !right.sunk) {
-    return -1;
-  }
-  if (!left.sunk && right.sunk) {
-    return 1;
-  }
-
-  if (left.distanceToHole !== right.distanceToHole) {
-    return left.distanceToHole - right.distanceToHole;
+  if (left.finishedAt !== right.finishedAt) {
+    return left.finishedAt - right.finishedAt;
   }
 
   if (left.strokes !== right.strokes) {
@@ -737,8 +751,36 @@ function comparePlayerStandings(left, right) {
   return 0;
 }
 
-function getLeaderboardEntries(room) {
-  const entries = room.playerOrder
+function comparePlayerStandings(left, right, room) {
+  if (left.roundComplete && right.roundComplete) {
+    return compareCompletedRoundMetrics(left, right, room);
+  }
+
+  if (left.holesCompleted !== right.holesCompleted) {
+    return right.holesCompleted - left.holesCompleted;
+  }
+
+  if (left.distanceToHole !== right.distanceToHole) {
+    return left.distanceToHole - right.distanceToHole;
+  }
+
+  if (left.activeCourseUnlockedAt !== right.activeCourseUnlockedAt) {
+    return left.activeCourseUnlockedAt - right.activeCourseUnlockedAt;
+  }
+
+  if (left.strokes !== right.strokes) {
+    return left.strokes - right.strokes;
+  }
+
+  if (left.solvedCount !== right.solvedCount) {
+    return right.solvedCount - left.solvedCount;
+  }
+
+  return 0;
+}
+
+function getSortedEntries(room, compareMetrics) {
+  return room.playerOrder
     .map((playerId) => room.players.get(playerId))
     .filter(Boolean)
     .map((player) => ({
@@ -746,7 +788,7 @@ function getLeaderboardEntries(room) {
       metrics: getPlayerStandingMetrics(room, player)
     }))
     .sort((left, right) => {
-      const comparison = comparePlayerStandings(left.metrics, right.metrics);
+      const comparison = compareMetrics(left.metrics, right.metrics, room);
       if (comparison !== 0) {
         return comparison;
       }
@@ -757,11 +799,14 @@ function getLeaderboardEntries(room) {
 
       return left.player.id.localeCompare(right.player.id);
     });
+}
 
+function applyLeaderboardRanks(entries, room, compareMetrics) {
   let previousMetrics = null;
   let leaderboardRank = 1;
+
   entries.forEach((entry, index) => {
-    if (previousMetrics && comparePlayerStandings(entry.metrics, previousMetrics) !== 0) {
+    if (previousMetrics && compareMetrics(entry.metrics, previousMetrics, room) !== 0) {
       leaderboardRank = index + 1;
     }
 
@@ -772,15 +817,135 @@ function getLeaderboardEntries(room) {
   return entries;
 }
 
-function getLeaderIdsFromEntries(entries) {
+function getLeaderboardEntries(room) {
+  return applyLeaderboardRanks(getSortedEntries(room, comparePlayerStandings), room, comparePlayerStandings);
+}
+
+function getRaceLeaderEntries(room) {
+  return getSortedEntries(room, compareRaceLeaderMetrics);
+}
+
+function getLeaderIdsFromEntries(entries, room, compareMetrics) {
   if (!entries.length) {
     return [];
   }
 
   const topMetrics = entries[0].metrics;
   return entries
-    .filter((entry) => comparePlayerStandings(entry.metrics, topMetrics) === 0)
+    .filter((entry) => compareMetrics(entry.metrics, topMetrics, room) === 0)
     .map((entry) => entry.player.id);
+}
+
+function getWinnerReasonId(room, leaderboardEntries) {
+  if (!leaderboardEntries.length || getLeaderIdsFromEntries(leaderboardEntries, room, comparePlayerStandings).length !== 1) {
+    return null;
+  }
+
+  const winner = leaderboardEntries[0].metrics;
+  const runnerUp = leaderboardEntries[1]?.metrics ?? null;
+
+  if (!runnerUp) {
+    if (room.status === "timed_out") {
+      return "time_expired";
+    }
+
+    if (winner.roundComplete) {
+      return "finished_first";
+    }
+
+    return winner.holesCompleted > 0 ? "furthest_course" : null;
+  }
+
+  if (room.status === "finished") {
+    if (room.courseIds.length === 1) {
+      return "finished_first";
+    }
+
+    if (winner.strokes !== runnerUp.strokes) {
+      return "lowest_total_strokes";
+    }
+
+    if (winner.solvedCount !== runnerUp.solvedCount) {
+      return "solved_question_tiebreak";
+    }
+
+    return "finished_first";
+  }
+
+  if (winner.holesCompleted !== runnerUp.holesCompleted) {
+    return winner.roundComplete ? "finished_first" : "furthest_course";
+  }
+
+  if (winner.distanceToHole !== runnerUp.distanceToHole) {
+    return "closest_to_hole";
+  }
+
+  if (winner.activeCourseUnlockedAt !== runnerUp.activeCourseUnlockedAt) {
+    return "reached_course_first";
+  }
+
+  if (winner.strokes !== runnerUp.strokes) {
+    return "lowest_total_strokes";
+  }
+
+  if (winner.solvedCount !== runnerUp.solvedCount) {
+    return "solved_question_tiebreak";
+  }
+
+  return room.status === "timed_out" ? "time_expired" : null;
+}
+
+function getWinnerReasonLabel(room, leaderboardEntries) {
+  const reasonId = getWinnerReasonId(room, leaderboardEntries);
+  if (!reasonId) {
+    return null;
+  }
+
+  if (reasonId === "finished_first") {
+    return room.courseIds.length === 1 ? "finished the hole first" : "finished all courses first";
+  }
+
+  if (room.status === "timed_out") {
+    if (reasonId === "closest_to_hole") {
+      return "closest to the hole when time expired";
+    }
+
+    if (reasonId === "furthest_course") {
+      return "furthest course reached when time expired";
+    }
+
+    if (reasonId === "reached_course_first") {
+      return "reached the course first before time expired";
+    }
+  }
+
+  return WIN_REASON_LABELS[reasonId] ?? null;
+}
+
+function serializePlayer(room, player, metrics = null) {
+  const resolvedMetrics = metrics ?? getPlayerStandingMetrics(room, player);
+
+  return {
+    id: player.id,
+    name: player.name,
+    color: player.color,
+    strokes: player.strokes,
+    currentHoleStrokes: resolvedMetrics.currentHoleStrokes,
+    swingCredits: getDisplayedSwingCredits(player),
+    solvedCount: resolvedMetrics.solvedCount,
+    solvedCountsByDifficulty: resolvedMetrics.solvedCountsByDifficulty,
+    ball: resolvedMetrics.ball,
+    courseStates: room.courseIds.map((_, courseIndex) => getPlayerCourseStateSummary(room, player, courseIndex)),
+    currentCourseIndex: resolvedMetrics.activeCourseIndex,
+    currentCourseNumber: resolvedMetrics.activeCourseNumber,
+    finishPlace: player.finishPlace,
+    finishedAt: player.finishedAt,
+    holesCompleted: player.holesCompleted,
+    holesTotal: room.courseIds.length,
+    distanceToHole: resolvedMetrics.distanceToHole,
+    progressPercent: resolvedMetrics.progressPercent,
+    leaderboardRank: resolvedMetrics.leaderboardRank ?? null
+  };
 }
 
 function serializeRoomTimer(room) {
@@ -797,15 +962,18 @@ function serializeRoomTimer(room) {
 
 function serializeRoomForPlayer(room, playerId) {
   const player = getPlayer(room, playerId);
-  const course = getCurrentCourse(room);
+  const viewerMetrics = getPlayerStandingMetrics(room, player);
+  const course = getPlayerCurrentCourse(room, player);
   const courseSummariesById = new Map(getCourseSummaries().map((courseSummary) => [courseSummary.id, courseSummary]));
   const leaderboardEntries = getLeaderboardEntries(room);
+  const raceLeaderEntries = getRaceLeaderEntries(room);
   const players = leaderboardEntries.map((entry) => serializePlayer(room, entry.player, entry.metrics));
-  const leaderIds = getLeaderIdsFromEntries(leaderboardEntries);
+  const standingsLeaderIds = getLeaderIdsFromEntries(leaderboardEntries, room, comparePlayerStandings);
+  const raceLeaderIds = getLeaderIdsFromEntries(raceLeaderEntries, room, compareRaceLeaderMetrics);
   const activeDifficulty = getPlayerActiveDifficulty(room, player);
   const questionState = getPlayerDifficultyState(player, activeDifficulty);
   const currentQuestion =
-    room.status !== "active" || !questionState.currentQuestionId
+    room.status !== "active" || player.finishPlace || !questionState.currentQuestionId
       ? null
       : sanitizeQuestion(getQuestionById(questionState.currentQuestionId));
 
@@ -814,7 +982,9 @@ function serializeRoomForPlayer(room, playerId) {
       code: room.code,
       status: room.status,
       winnerId: room.winnerId,
-      leaderIds,
+      winnerReason: room.winnerReason,
+      leaderIds: standingsLeaderIds,
+      raceLeaderIds,
       hostId: room.hostId,
       difficultyMode: room.difficultyMode,
       difficulty: room.difficulty,
@@ -824,8 +994,8 @@ function serializeRoomForPlayer(room, playerId) {
       courseOrder: room.courseIds.map(
         (courseId) => courseSummariesById.get(courseId) ?? { id: courseId, name: courseId, description: "" }
       ),
-      currentCourseIndex: room.currentCourseIndex,
-      currentCourseNumber: room.currentCourseIndex + 1,
+      currentCourseIndex: viewerMetrics.activeCourseIndex,
+      currentCourseNumber: viewerMetrics.activeCourseNumber,
       totalCourses: room.courseIds.length,
       createdAt: room.createdAt,
       completedAt: room.completedAt,
@@ -838,6 +1008,7 @@ function serializeRoomForPlayer(room, playerId) {
       },
       finishedPlayers: room.finishOrder.length,
       chatMessages: room.chatMessages,
+      recentSwing: room.recentSwing,
       course,
       players
     },
@@ -846,16 +1017,28 @@ function serializeRoomForPlayer(room, playerId) {
       name: player.name,
       color: player.color,
       strokes: player.strokes,
-      currentHoleStrokes: player.currentHoleStrokes,
+      currentHoleStrokes: viewerMetrics.currentHoleStrokes,
       swingCredits: getDisplayedSwingCredits(player),
       solvedCount: player.solvedQuestionIds.length,
-      ball: player.ball,
+      solvedCountsByDifficulty: viewerMetrics.solvedCountsByDifficulty,
+      ball: viewerMetrics.ball,
+      courseStates: room.courseIds.map((_, courseIndex) => getPlayerCourseStateSummary(room, player, courseIndex)),
+      currentCourseIndex: viewerMetrics.activeCourseIndex,
+      currentCourseNumber: viewerMetrics.activeCourseNumber,
       holesCompleted: player.holesCompleted,
       finishPlace: player.finishPlace,
       finishedAt: player.finishedAt,
       isHost: player.id === room.hostId,
       hasEndVote: room.endVotePlayerIds.has(player.id),
       activeDifficulty,
+      difficultyStates: createDifficultyLookup((difficulty) => {
+        const difficultyState = getPlayerDifficultyState(player, difficulty);
+        return {
+          currentQuestionId: difficultyState.currentQuestionId,
+          currentQuestionAssignment: difficultyState.currentQuestionAssignment,
+          awaitingNextQuestion: difficultyState.awaitingNextQuestion
+        };
+      }),
       awaitingNextQuestion: questionState.awaitingNextQuestion,
       currentQuestionAssignment: questionState.currentQuestionAssignment,
       devModeEnabled: player.devModeEnabled,
@@ -913,7 +1096,6 @@ function closeRoom(room, message = "Room closed.") {
   clearRoomDisconnectTimers(room);
   cancelRoomExpiration(room.code);
   cancelRoomDeadline(room.code);
-  cancelRoomHoleAdvance(room.code);
 
   const subscribers = roomSubscribers.get(room.code);
   if (subscribers) {
@@ -1024,13 +1206,14 @@ export function createRoom({ name, difficultyMode, difficulty, courseCount, cour
     defaultDifficulty: normalizedDifficultyConfig.defaultDifficulty,
     questionSource: normalizedQuestionSource,
     courseIds: resolvedCourseIds,
-    currentCourseIndex: 0,
     status: "waiting",
     winnerId: null,
+    winnerReason: null,
     hostId: null,
     endVotePlayerIds: new Set(),
     finishOrder: [],
     chatMessages: [],
+    recentSwing: null,
     players: new Map(),
     playerOrder: [],
     questionSequences: createDifficultyLookup(() => []),
@@ -1108,10 +1291,12 @@ export function startRoom({ roomCode, playerId, sessionId }) {
   room.playerOrder.forEach((id) => {
     const currentPlayer = room.players.get(id);
     if (currentPlayer) {
+      ensurePlayerCourseState(room, currentPlayer, 0).unlockedAt ??= room.startedAt;
       ensurePlayerHasQuestionForDifficulty(room, currentPlayer);
     }
   });
 
+  syncRoomOutcome(room);
   syncRoomDeadline(room);
   syncRoomExpiration(room);
   broadcastRoomState(room);
@@ -1136,11 +1321,11 @@ export function toggleEndVote({ roomCode, playerId, sessionId }) {
   }
 
   if (room.endVotePlayerIds.size === room.playerOrder.length && room.playerOrder.length > 0) {
-    cancelRoomHoleAdvance(room.code);
     room.status = "ended";
     room.completedAt ??= Date.now();
   }
 
+  syncRoomOutcome(room);
   syncRoomDeadline(room);
   syncRoomExpiration(room);
   broadcastRoomState(room);
@@ -1308,7 +1493,8 @@ export function setPlayerDifficulty({ roomCode, playerId, sessionId, difficulty 
 export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
   const room = getRoomByCode(roomCode);
   const player = getAuthorizedPlayer(room, playerId, sessionId);
-  const course = getCurrentCourse(room);
+  const course = getPlayerCurrentCourse(room, player);
+  const courseState = getPlayerCurrentCourseState(room, player);
   ensureRoomStarted(room);
   ensurePlayerCanStillPlay(player);
 
@@ -1318,24 +1504,40 @@ export function takeSwing({ roomCode, playerId, sessionId, angle, power }) {
 
   const simulation = simulateSwing({
     course,
-    ball: player.ball,
+    ball: courseState.ball,
     angle: Number(angle),
     power: Number(power)
   });
 
-  player.ball = simulation.ball;
+  courseState.ball = simulation.ball;
   if (!player.devModeEnabled) {
     player.swingCredits -= 1;
   }
   player.strokes += 1;
-  player.currentHoleStrokes += 1;
+  courseState.strokes += 1;
+  room.recentSwing = {
+    id: createId("swing"),
+    playerId: player.id,
+    courseIndex: getPlayerCurrentCourseIndex(room, player),
+    courseNumber: getPlayerCurrentCourseIndex(room, player) + 1,
+    courseId: room.courseIds[getPlayerCurrentCourseIndex(room, player)],
+    path: simulation.path,
+    createdAt: Date.now()
+  };
 
-  if (player.ball.sunk) {
+  if (courseState.ball.sunk) {
+    const completedAt = Date.now();
+    courseState.completedAt ??= completedAt;
+    player.holesCompleted += 1;
+
     if (!player.finishPlace) {
-      room.finishOrder.push(player.id);
-      player.finishPlace = room.finishOrder.length;
-      player.finishedAt = Date.now();
-      player.holesCompleted += 1;
+      if (hasPlayerNextCourse(room, player)) {
+        unlockNextCourseForPlayer(room, player, completedAt);
+      } else {
+        room.finishOrder.push(player.id);
+        player.finishPlace = room.finishOrder.length;
+        player.finishedAt = completedAt;
+      }
     }
   }
 
@@ -1356,7 +1558,15 @@ export function listRooms() {
     difficultyMode: room.difficultyMode,
     difficulty: room.difficulty,
     totalCourses: room.courseIds.length,
-    currentCourseNumber: room.currentCourseIndex + 1,
+    currentCourseNumber:
+      room.playerOrder.length > 0
+        ? Math.max(
+            ...room.playerOrder.map((playerId) => {
+              const player = room.players.get(playerId);
+              return player ? getPlayerCurrentCourseIndex(room, player) + 1 : 1;
+            })
+          )
+        : 1,
     questionSource: room.questionSource,
     players: room.playerOrder.length
   }));
@@ -1367,7 +1577,6 @@ export function resetRoomServiceState() {
   roomStore.clear();
   clearAllRoomDeadlineTimers();
   clearAllRoomExpirationTimers();
-  clearAllRoomHoleAdvanceTimers();
   roomSubscribers.forEach((subscribers, roomCode) => {
     for (const subscription of subscribers.values()) {
       subscription.closedByServer = true;

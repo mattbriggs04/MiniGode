@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { getCourseSummaries } from "../src/data/courses.js";
 import {
   advanceQuestion,
   createRoom,
@@ -16,11 +17,10 @@ import {
   takeSwing,
   submitAnswer
 } from "../src/services/roomService.js";
+import { findCourseSinkPlan } from "../test-support/coursePlanning.js";
 
-const MEADOW_RUN_SINK_SHOT = {
-  angle: (-1 * Math.PI) / 180,
-  power: 0.8
-};
+const COURSE_IDS = getCourseSummaries().map((course) => course.id);
+const DEFAULT_COURSE_ID = COURSE_IDS[0];
 
 test.afterEach(() => {
   resetRoomServiceState();
@@ -136,34 +136,123 @@ const SOLUTIONS = {
 `
 };
 
-test("room flow awards difficulty-based swings, waits for advance, and spends them one at a time", () => {
-  const created = createRoom({
+function getSession(identity) {
+  return {
+    roomCode: identity.roomCode,
+    playerId: identity.playerId,
+    sessionId: identity.sessionId
+  };
+}
+
+function createTestRoom(overrides = {}) {
+  return createRoom({
     name: "Ada",
-    difficulty: "medium",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+    difficulty: "easy",
+    courseId: DEFAULT_COURSE_ID,
+    questionSource: "local",
+    ...overrides
+  });
+}
+
+function startTestRoom(identity) {
+  return startRoom(getSession(identity));
+}
+
+function getCurrentQuestion(session) {
+  const question = getRoomState(session).me.currentQuestion;
+  assert.ok(question, "Expected an active question.");
+  return question;
+}
+
+function submitCurrentSolution(session, scope = "all") {
+  const question = getCurrentQuestion(session);
+  const submission = SOLUTIONS[question.functionName];
+  assert.ok(submission, `Missing test solution for ${question.functionName}.`);
+  return submitAnswer({
+    ...session,
+    submission,
+    scope
+  });
+}
+
+function requireCourseIds(count) {
+  assert.ok(COURSE_IDS.length >= count, `Expected at least ${count} courses in the catalog.`);
+  return COURSE_IDS.slice(0, count);
+}
+
+function getCourseSinkPlan(courseId) {
+  const plan = findCourseSinkPlan(courseId);
+  assert.ok(plan?.length, `Expected a sink plan for ${courseId}.`);
+  return plan;
+}
+
+function earnSwingCredits(session, minimumCredits) {
+  let attempts = 0;
+
+  while (getRoomState(session).me.swingCredits < minimumCredits) {
+    const solved = submitCurrentSolution(session);
+    assert.equal(solved.evaluation.passed, true);
+
+    if (solved.state.me.awaitingNextQuestion) {
+      advanceQuestion(session);
+    }
+
+    attempts += 1;
+    assert.ok(attempts <= minimumCredits + 6, "Unable to earn enough swing credits for the test.");
+  }
+}
+
+function sinkCurrentCourse(session) {
+  const before = getRoomState(session);
+  const currentCourseIndex = before.me.currentCourseIndex;
+  const currentCourseId = before.me.courseStates[currentCourseIndex].courseId;
+  const plan = getCourseSinkPlan(currentCourseId);
+  let result = null;
+
+  plan.forEach((swing) => {
+    result = takeSwing({
+      ...session,
+      angle: swing.angle,
+      power: swing.power
+    });
+  });
+
+  assert.ok(result);
+  assert.equal(result.state.me.courseStates[currentCourseIndex].completed, true);
+  return result;
+}
+
+function finishRound(session) {
+  let latestState = getRoomState(session);
+  let result = { state: latestState };
+  let completedCourses = 0;
+
+  while (!latestState.me.finishPlace) {
+    result = sinkCurrentCourse(session);
+    latestState = result.state;
+    completedCourses += 1;
+    assert.ok(completedCourses <= COURSE_IDS.length + 1, "Unable to finish the round during the test.");
+  }
+
+  return result;
+}
+
+test("room flow awards difficulty-based swings, waits for advance, and spends them one at a time", () => {
+  const created = createTestRoom({
+    difficulty: "medium"
   });
 
   assert.equal(created.state.room.status, "waiting");
   assert.equal(created.state.me.currentQuestion, null);
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const started = startTestRoom(created);
 
   assert.equal(started.state.room.status, "active");
   assert.ok(started.state.me.currentQuestion);
   const firstQuestionId = started.state.me.currentQuestion.id;
   const firstAssignment = started.state.me.currentQuestionAssignment;
 
-  const solved = submitAnswer({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
-  });
+  const solved = submitCurrentSolution(getSession(created));
 
   assert.equal(solved.evaluation.passed, true);
   assert.equal(solved.evaluation.message, "All tests passed. 3 swing credits awarded.");
@@ -172,44 +261,30 @@ test("room flow awards difficulty-based swings, waits for advance, and spends th
   assert.equal(solved.state.me.currentQuestionAssignment, firstAssignment);
   assert.equal(solved.state.me.awaitingNextQuestion, true);
 
-  const repeatedSolve = submitAnswer({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
-  });
+  const repeatedSolve = submitCurrentSolution(getSession(created));
 
   assert.equal(repeatedSolve.evaluation.passed, true);
   assert.equal(repeatedSolve.evaluation.message, "All tests passed.");
   assert.equal(repeatedSolve.state.me.swingCredits, 3);
   assert.equal(repeatedSolve.state.me.currentQuestion.id, firstQuestionId);
 
-  const advanced = advanceQuestion({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const advanced = advanceQuestion(getSession(created));
 
   assert.notEqual(advanced.state.me.currentQuestion.id, firstQuestionId);
   assert.equal(advanced.state.me.awaitingNextQuestion, false);
   assert.ok(advanced.state.me.currentQuestionAssignment > firstAssignment);
 
+  const openingSwing = getCourseSinkPlan(DEFAULT_COURSE_ID)[0];
   const swing = takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    angle: -0.4,
-    power: 0.58
+    ...getSession(created),
+    angle: openingSwing.angle,
+    power: openingSwing.power
   });
 
   assert.equal(swing.state.me.swingCredits, 2);
-  assert.equal(swing.state.me.strokes, 1);
+  assert.equal(swing.state.me.currentHoleStrokes, 1);
 
-  const refreshed = getRoomState({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const refreshed = getRoomState(getSession(created));
 
   assert.equal(refreshed.me.strokes, 1);
 });
@@ -222,27 +297,12 @@ test("correct solutions award configured swing credits for each difficulty", () 
   };
 
   for (const [difficulty, expectedCredits] of Object.entries(expectedCreditsByDifficulty)) {
-    const created = createRoom({
-      name: "Ada",
-      difficulty,
-      courseId: "sunset-switchbacks",
-      questionSource: "local"
-    });
+    const created = createTestRoom({ difficulty });
 
-    const started = startRoom({
-      roomCode: created.roomCode,
-      playerId: created.playerId,
-      sessionId: created.sessionId
-    });
-
+    const started = startTestRoom(created);
     assert.equal(started.state.me.currentQuestion.difficulty, difficulty);
 
-    const solved = submitAnswer({
-      roomCode: created.roomCode,
-      playerId: created.playerId,
-      sessionId: created.sessionId,
-      submission: SOLUTIONS[started.state.me.currentQuestion.functionName]
-    });
+    const solved = submitCurrentSolution(getSession(created));
 
     assert.equal(solved.evaluation.passed, true);
     assert.equal(
@@ -255,12 +315,9 @@ test("correct solutions award configured swing credits for each difficulty", () 
   }
 });
 
-test("players receive the same ordered question sequence within a room", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+test("players receive the same ordered question sequence within a fixed-difficulty room", () => {
+  const created = createTestRoom({
+    name: "Host"
   });
 
   const joined = joinRoom({
@@ -268,71 +325,27 @@ test("players receive the same ordered question sequence within a room", () => {
     name: "Guest"
   });
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  const guestStart = getRoomState({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  const started = startTestRoom(created);
+  const guestStart = getRoomState(getSession(joined));
 
   assert.equal(started.state.me.currentQuestion.id, guestStart.me.currentQuestion.id);
 
-  const firstFunctionName = started.state.me.currentQuestion.functionName;
-  submitAnswer({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    submission: SOLUTIONS[firstFunctionName]
-  });
-  submitAnswer({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
-    submission: SOLUTIONS[firstFunctionName]
-  });
+  submitCurrentSolution(getSession(created));
+  submitCurrentSolution(getSession(joined));
 
-  const hostAdvanced = advanceQuestion({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-  const guestAdvanced = advanceQuestion({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  const hostAdvanced = advanceQuestion(getSession(created));
+  const guestAdvanced = advanceQuestion(getSession(joined));
 
   assert.notEqual(hostAdvanced.state.me.currentQuestion.id, started.state.me.currentQuestion.id);
   assert.equal(hostAdvanced.state.me.currentQuestion.id, guestAdvanced.state.me.currentQuestion.id);
 });
 
 test("sample-only runs do not award swings or rotate the question", () => {
-  const created = createRoom({
-    name: "Ada",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
-  });
-
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const created = createTestRoom();
+  const started = startTestRoom(created);
   const questionId = started.state.me.currentQuestion.id;
 
-  const sampled = submitAnswer({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    submission: SOLUTIONS[started.state.me.currentQuestion.functionName],
-    scope: "sample"
-  });
+  const sampled = submitCurrentSolution(getSession(created), "sample");
 
   assert.equal(sampled.evaluation.passed, true);
   assert.equal(sampled.evaluation.scope, "sample");
@@ -352,11 +365,9 @@ test("bootstrap advertises supported room options and swing credit rules", () =>
 });
 
 test("player-choice rooms keep a shared question order within each difficulty", () => {
-  const created = createRoom({
+  const created = createTestRoom({
     name: "Host",
-    difficultyMode: "player-choice",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+    difficultyMode: "player-choice"
   });
 
   const joined = joinRoom({
@@ -364,121 +375,68 @@ test("player-choice rooms keep a shared question order within each difficulty", 
     name: "Guest"
   });
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  const guestStart = getRoomState({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  const started = startTestRoom(created);
+  const guestStart = getRoomState(getSession(joined));
 
   assert.equal(started.state.room.difficultyMode, "player-choice");
   assert.equal(started.state.me.activeDifficulty, "easy");
   assert.equal(started.state.me.currentQuestion.id, guestStart.me.currentQuestion.id);
 
   const hostMedium = setPlayerDifficulty({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
+    ...getSession(created),
     difficulty: "medium"
   });
   const guestMedium = setPlayerDifficulty({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
+    ...getSession(joined),
     difficulty: "medium"
   });
 
   assert.equal(hostMedium.state.me.currentQuestion.difficulty, "medium");
   assert.equal(hostMedium.state.me.currentQuestion.id, guestMedium.state.me.currentQuestion.id);
 
-  submitAnswer({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    submission: SOLUTIONS[hostMedium.state.me.currentQuestion.functionName]
-  });
-  submitAnswer({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
-    submission: SOLUTIONS[guestMedium.state.me.currentQuestion.functionName]
-  });
+  submitCurrentSolution(getSession(created));
+  submitCurrentSolution(getSession(joined));
 
-  const hostMediumAdvanced = advanceQuestion({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-  const guestMediumAdvanced = advanceQuestion({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  const hostMediumAdvanced = advanceQuestion(getSession(created));
+  const guestMediumAdvanced = advanceQuestion(getSession(joined));
 
   assert.notEqual(hostMediumAdvanced.state.me.currentQuestion.id, hostMedium.state.me.currentQuestion.id);
   assert.equal(hostMediumAdvanced.state.me.currentQuestion.id, guestMediumAdvanced.state.me.currentQuestion.id);
 });
 
 test("player-choice rooms keep progress separate for each difficulty", () => {
-  const created = createRoom({
+  const created = createTestRoom({
     name: "Host",
-    difficultyMode: "player-choice",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+    difficultyMode: "player-choice"
   });
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
+  const started = startTestRoom(created);
   const firstEasy = started.state.me.currentQuestion;
   assert.equal(firstEasy.difficulty, "easy");
 
   const firstMedium = setPlayerDifficulty({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
+    ...getSession(created),
     difficulty: "medium"
   }).state.me.currentQuestion;
 
   assert.equal(firstMedium.difficulty, "medium");
 
   const backToEasy = setPlayerDifficulty({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
+    ...getSession(created),
     difficulty: "easy"
   });
 
   assert.equal(backToEasy.state.me.currentQuestion.id, firstEasy.id);
 
-  submitAnswer({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    submission: SOLUTIONS[firstEasy.functionName]
-  });
+  submitCurrentSolution(getSession(created));
 
-  const secondEasy = advanceQuestion({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  }).state.me.currentQuestion;
+  const secondEasy = advanceQuestion(getSession(created)).state.me.currentQuestion;
 
   assert.notEqual(secondEasy.id, firstEasy.id);
   assert.equal(secondEasy.difficulty, "easy");
 
   const mediumAfterEasyAdvance = setPlayerDifficulty({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
+    ...getSession(created),
     difficulty: "medium"
   });
 
@@ -487,79 +445,105 @@ test("player-choice rooms keep progress separate for each difficulty", () => {
   assert.equal(mediumAfterEasyAdvance.state.me.currentQuestionAssignment, 1);
 });
 
-test("rooms can randomize a unique multi-course sequence from the course pool", () => {
-  const created = createRoom({
+test("player-choice rooms preserve pending next-question state when switching difficulties", () => {
+  const created = createTestRoom({
     name: "Host",
-    difficulty: "easy",
-    courseCount: 3,
-    questionSource: "local"
+    difficultyMode: "player-choice"
   });
 
-  assert.equal(created.state.room.totalCourses, 3);
-  assert.equal(created.state.room.courseOrder.length, 3);
-  assert.equal(new Set(created.state.room.courseOrder.map((course) => course.id)).size, 3);
+  const started = startTestRoom(created);
+  const easyQuestionId = started.state.me.currentQuestion.id;
+
+  const solvedEasy = submitCurrentSolution(getSession(created));
+
+  assert.equal(solvedEasy.state.me.awaitingNextQuestion, true);
+  assert.equal(solvedEasy.state.me.difficultyStates.easy.awaitingNextQuestion, true);
+
+  const mediumState = setPlayerDifficulty({
+    ...getSession(created),
+    difficulty: "medium"
+  });
+
+  assert.equal(mediumState.state.me.currentQuestion.difficulty, "medium");
+  assert.equal(mediumState.state.me.awaitingNextQuestion, false);
+  assert.equal(mediumState.state.me.difficultyStates.easy.awaitingNextQuestion, true);
+
+  const backToEasy = setPlayerDifficulty({
+    ...getSession(created),
+    difficulty: "easy"
+  });
+
+  assert.equal(backToEasy.state.me.currentQuestion.id, easyQuestionId);
+  assert.equal(backToEasy.state.me.awaitingNextQuestion, true);
+
+  const advancedEasy = advanceQuestion(getSession(created));
+
+  assert.notEqual(advancedEasy.state.me.currentQuestion.id, easyQuestionId);
+  assert.equal(advancedEasy.state.me.awaitingNextQuestion, false);
 });
 
-test("rooms respect explicit course order and advance to the next course after a hole completes", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+test("rooms can randomize a unique multi-course sequence from the course pool", () => {
+  const requestedCourseCount = Math.min(3, COURSE_IDS.length);
+  const created = createTestRoom({
+    name: "Host",
+    courseCount: requestedCourseCount,
+    courseId: undefined
+  });
 
-  const created = createRoom({
+  assert.equal(created.state.room.totalCourses, requestedCourseCount);
+  assert.equal(created.state.room.courseOrder.length, requestedCourseCount);
+  assert.equal(new Set(created.state.room.courseOrder.map((course) => course.id)).size, requestedCourseCount);
+});
+
+test("rooms respect explicit course order and unlock the next course per player", () => {
+  const orderedCourseIds = requireCourseIds(2);
+  const created = createTestRoom({
     name: "dev$mode!",
-    difficulty: "easy",
-    courseIds: ["meadow-run", "copper-canyon"],
-    questionSource: "local"
+    courseIds: orderedCourseIds,
+    courseId: undefined
   });
-
-  assert.equal(created.state.room.totalCourses, 2);
-  assert.deepEqual(
-    created.state.room.courseOrder.map((course) => course.id),
-    ["meadow-run", "copper-canyon"]
-  );
-
-  const started = startRoom({
+  const joined = joinRoom({
     roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
+    name: "Guest"
   });
 
-  assert.equal(started.state.room.course.id, "meadow-run");
+  const started = startTestRoom(created);
+
+  assert.equal(started.state.room.totalCourses, 2);
+  assert.deepEqual(
+    started.state.room.courseOrder.map((course) => course.id),
+    orderedCourseIds
+  );
+  assert.equal(started.state.room.course.id, orderedCourseIds[0]);
   assert.equal(started.state.room.currentCourseNumber, 1);
 
-  const firstHoleFinished = takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    ...MEADOW_RUN_SINK_SHOT
-  });
+  const hostAdvanced = sinkCurrentCourse(getSession(created));
 
-  assert.equal(firstHoleFinished.state.room.status, "active");
-  assert.equal(firstHoleFinished.state.room.currentCourseNumber, 1);
-  assert.equal(firstHoleFinished.state.me.holesCompleted, 1);
-  assert.equal(firstHoleFinished.state.me.ball.sunk, true);
+  assert.equal(hostAdvanced.state.room.status, "active");
+  assert.equal(hostAdvanced.state.room.currentCourseNumber, 2);
+  assert.equal(hostAdvanced.state.room.course.id, orderedCourseIds[1]);
+  assert.equal(hostAdvanced.state.me.currentCourseIndex, 1);
+  assert.equal(hostAdvanced.state.me.holesCompleted, 1);
+  assert.equal(hostAdvanced.state.me.finishPlace, null);
+  assert.equal(hostAdvanced.state.me.courseStates[0].completed, true);
+  assert.equal(hostAdvanced.state.me.courseStates[1].unlocked, true);
+  assert.equal(hostAdvanced.state.me.courseStates[1].completed, false);
 
-  t.mock.timers.tick(1800);
+  const guestState = getRoomState(getSession(joined));
+  const serializedHost = guestState.room.players.find((player) => player.id === created.playerId);
 
-  const advanced = getRoomState({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  assert.equal(advanced.room.currentCourseNumber, 2);
-  assert.equal(advanced.room.course.id, "copper-canyon");
-  assert.equal(advanced.me.holesCompleted, 1);
-  assert.equal(advanced.me.ball.sunk, false);
-  assert.equal(advanced.me.finishPlace, null);
-  assert.equal(advanced.me.currentHoleStrokes, 0);
-  assert.equal(advanced.me.strokes, 1);
+  assert.equal(guestState.room.currentCourseNumber, 1);
+  assert.equal(guestState.room.course.id, orderedCourseIds[0]);
+  assert.equal(guestState.me.currentCourseIndex, 0);
+  assert.equal(guestState.me.courseStates[0].completed, false);
+  assert.equal(guestState.me.courseStates[1].unlocked, false);
+  assert.equal(serializedHost?.currentCourseNumber, 2);
 });
 
 test("players can join before the host starts and are blocked after start", () => {
-  const created = createRoom({
+  const created = createTestRoom({
     name: "Host",
-    difficulty: "medium",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+    difficulty: "medium"
   });
 
   const joined = joinRoom({
@@ -570,11 +554,7 @@ test("players can join before the host starts and are blocked after start", () =
   assert.equal(joined.state.room.status, "waiting");
   assert.equal(joined.state.me.currentQuestion, null);
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  startTestRoom(created);
 
   assert.throws(
     () =>
@@ -587,11 +567,8 @@ test("players can join before the host starts and are blocked after start", () =
 });
 
 test("the game ends only after every player votes to end it", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
 
   const joined = joinRoom({
@@ -599,22 +576,14 @@ test("the game ends only after every player votes to end it", () => {
     name: "Guest"
   });
 
-  const firstVote = toggleEndVote({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const firstVote = toggleEndVote(getSession(created));
 
   assert.equal(firstVote.ended, false);
   assert.equal(firstVote.state.room.status, "waiting");
   assert.equal(firstVote.state.room.endVotes.count, 1);
   assert.equal(firstVote.state.me.hasEndVote, true);
 
-  const secondVote = toggleEndVote({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  const secondVote = toggleEndVote(getSession(joined));
 
   assert.equal(secondVote.ended, true);
   assert.equal(secondVote.state.room.status, "ended");
@@ -623,38 +592,21 @@ test("the game ends only after every player votes to end it", () => {
 });
 
 test("ended games with tied players do not assign a fake winner", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
-
   const joined = joinRoom({
     roomCode: created.roomCode,
     name: "Guest"
   });
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  toggleEndVote({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  const ended = toggleEndVote({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  startTestRoom(created);
+  toggleEndVote(getSession(created));
+  const ended = toggleEndVote(getSession(joined));
 
   assert.equal(ended.state.room.status, "ended");
   assert.equal(ended.state.room.winnerId, null);
+  assert.equal(ended.state.room.winnerReason, null);
   assert.deepEqual(
     [...ended.state.room.leaderIds].sort(),
     [created.playerId, joined.playerId].sort()
@@ -665,14 +617,49 @@ test("ended games with tied players do not assign a fake winner", () => {
   );
 });
 
+test("race leaders ignore solved-question advantages until golf progress changes", () => {
+  const created = createTestRoom({
+    name: "Host"
+  });
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  startTestRoom(created);
+  const solved = submitCurrentSolution(getSession(created));
+
+  assert.deepEqual(
+    [...solved.state.room.raceLeaderIds].sort(),
+    [created.playerId, joined.playerId].sort()
+  );
+  assert.deepEqual(solved.state.room.leaderIds, [created.playerId]);
+});
+
+test("ended games expose the solved-question tiebreak winner reason when standings split on questions solved", () => {
+  const created = createTestRoom({
+    name: "Host"
+  });
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  startTestRoom(created);
+  submitCurrentSolution(getSession(created));
+  toggleEndVote(getSession(created));
+  const ended = toggleEndVote(getSession(joined));
+
+  assert.equal(ended.state.room.status, "ended");
+  assert.equal(ended.state.room.winnerId, created.playerId);
+  assert.equal(ended.state.room.winnerReason, "solved-question tiebreak");
+});
+
 test("timed rooms expose timer metadata and transition to timed_out when the deadline passes", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 
-  const created = createRoom({
+  const created = createTestRoom({
     name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local",
     timeLimitMinutes: 5
   });
 
@@ -680,11 +667,7 @@ test("timed rooms expose timer metadata and transition to timed_out when the dea
   assert.equal(created.state.room.timer.timeLimitMinutes, 5);
   assert.equal(created.state.room.timer.startedAt, null);
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const started = startTestRoom(created);
 
   assert.equal(started.state.room.status, "active");
   assert.ok(started.state.room.timer.startedAt !== null);
@@ -693,24 +676,20 @@ test("timed rooms expose timer metadata and transition to timed_out when the dea
 
   t.mock.timers.tick(300_000);
 
-  const timedOut = getRoomState({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const timedOut = getRoomState(getSession(created));
 
   assert.equal(timedOut.room.status, "timed_out");
   assert.ok(timedOut.room.completedAt);
   assert.equal(timedOut.room.timer.expired, true);
   assert.equal(timedOut.room.timer.remainingMs, 0);
   assert.equal(timedOut.me.currentQuestion, null);
+  assert.equal(timedOut.room.winnerId, created.playerId);
+  assert.equal(timedOut.room.winnerReason, "led when time expired");
 
   assert.throws(
     () =>
       submitAnswer({
-        roomCode: created.roomCode,
-        playerId: created.playerId,
-        sessionId: created.sessionId,
+        ...getSession(created),
         submission: SOLUTIONS.contains_duplicate
       }),
     /Time is up/
@@ -719,10 +698,8 @@ test("timed rooms expose timer metadata and transition to timed_out when the dea
   assert.throws(
     () =>
       takeSwing({
-        roomCode: created.roomCode,
-        playerId: created.playerId,
-        sessionId: created.sessionId,
-        angle: -0.4,
+        ...getSession(created),
+        angle: 0,
         power: 0.5
       }),
     /Time is up/
@@ -731,40 +708,26 @@ test("timed rooms expose timer metadata and transition to timed_out when the dea
   assert.throws(
     () =>
       postChatMessage({
-        roomCode: created.roomCode,
-        playerId: created.playerId,
-        sessionId: created.sessionId,
+        ...getSession(created),
         message: "Too late"
       }),
     /already over/
   );
 });
 
-test("ended rooms are removed shortly after unanimous end vote", (t) => {
+test("ended rooms are removed shortly after a unanimous end vote", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
-
   const joined = joinRoom({
     roomCode: created.roomCode,
     name: "Guest"
   });
 
-  toggleEndVote({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-  toggleEndVote({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
+  toggleEndVote(getSession(created));
+  toggleEndVote(getSession(joined));
 
   assert.equal(listRooms().length, 1);
   t.mock.timers.tick(30_000);
@@ -774,19 +737,12 @@ test("ended rooms are removed shortly after unanimous end vote", (t) => {
 test("timed out rooms are removed after the post-game retention window", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 
-  const created = createRoom({
+  const created = createTestRoom({
     name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local",
     timeLimitMinutes: 5
   });
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  startTestRoom(created);
 
   t.mock.timers.tick(300_000);
   assert.equal(listRooms().length, 1);
@@ -796,17 +752,12 @@ test("timed out rooms are removed after the post-game retention window", (t) => 
 });
 
 test("chat messages are attached to room state", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
 
   const posted = postChatMessage({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
+    ...getSession(created),
     message: "Ready when you are"
   });
 
@@ -816,18 +767,12 @@ test("chat messages are attached to room state", () => {
 });
 
 test("rooms can pull questions from the Hugging Face bank", () => {
-  const created = createRoom({
+  const created = createTestRoom({
     name: "HF Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
     questionSource: "huggingface"
   });
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const started = startTestRoom(created);
 
   assert.equal(started.state.room.questionSource, "huggingface");
   assert.ok(started.state.me.currentQuestion);
@@ -835,11 +780,8 @@ test("rooms can pull questions from the Hugging Face bank", () => {
 });
 
 test("duplicate player names are rejected within a room", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
 
   assert.throws(
@@ -853,11 +795,8 @@ test("duplicate player names are rejected within a room", () => {
 });
 
 test("authenticated room state requests require the correct session token", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
 
   assert.throws(
@@ -872,63 +811,42 @@ test("authenticated room state requests require the correct session token", () =
 });
 
 test("disconnecting the host deletes the room", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
-
   const joined = joinRoom({
     roomCode: created.roomCode,
     name: "Guest"
   });
 
   const disconnected = disconnectPlayerSession({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
+    ...getSession(created),
     immediate: true
   });
 
   assert.equal(disconnected.roomClosed, true);
   assert.equal(listRooms().length, 0);
   assert.throws(
-    () =>
-      getRoomState({
-        roomCode: created.roomCode,
-        playerId: joined.playerId,
-        sessionId: joined.sessionId
-      }),
+    () => getRoomState(getSession(joined)),
     /Room not found/
   );
 });
 
 test("disconnecting a guest keeps the room alive and removes that player", () => {
-  const created = createRoom({
-    name: "Host",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "Host"
   });
-
   const joined = joinRoom({
     roomCode: created.roomCode,
     name: "Guest"
   });
 
   disconnectPlayerSession({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
+    ...getSession(joined),
     immediate: true
   });
 
-  const refreshed = getRoomState({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const refreshed = getRoomState(getSession(created));
 
   assert.equal(listRooms().length, 1);
   assert.equal(refreshed.room.players.length, 1);
@@ -936,60 +854,40 @@ test("disconnecting a guest keeps the room alive and removes that player", () =>
 });
 
 test("dev mode players keep unlimited swings", () => {
-  const created = createRoom({
-    name: "dev$mode!",
-    difficulty: "easy",
-    courseId: "sunset-switchbacks",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "dev$mode!"
   });
 
-  const started = startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const started = startTestRoom(created);
 
   assert.equal(started.state.me.devModeEnabled, true);
   assert.equal(started.state.me.swingCredits, 999);
 
+  const openingSwing = getCourseSinkPlan(DEFAULT_COURSE_ID)[0];
   const swing = takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    angle: -0.4,
-    power: 0.05
+    ...getSession(created),
+    angle: openingSwing.angle,
+    power: openingSwing.power
   });
 
   assert.equal(swing.state.me.swingCredits, 999);
   assert.equal(swing.state.me.strokes, 1);
 });
 
-test("single-player rounds record completion details when the hole is finished", () => {
-  const created = createRoom({
-    name: "dev$mode!",
-    difficulty: "easy",
-    courseId: "meadow-run",
-    questionSource: "local"
+test("single-player rounds record completion details when all courses are finished", () => {
+  const created = createTestRoom({
+    name: "dev$mode!"
   });
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  const finished = takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    ...MEADOW_RUN_SINK_SHOT
-  });
+  startTestRoom(created);
+  const finished = finishRound(getSession(created));
 
   assert.equal(finished.state.room.status, "finished");
   assert.equal(finished.state.room.winnerId, created.playerId);
+  assert.equal(finished.state.room.winnerReason, "finished the hole first");
   assert.equal(finished.state.room.finishedPlayers, 1);
   assert.ok(finished.state.room.completedAt);
-  assert.equal(finished.state.me.ball.sunk, true);
+  assert.equal(finished.state.me.courseStates[0].completed, true);
   assert.equal(finished.state.me.finishPlace, 1);
   assert.ok(finished.state.me.finishedAt);
 });
@@ -997,56 +895,30 @@ test("single-player rounds record completion details when the hole is finished",
 test("finished rooms are removed after the post-game retention window", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 
-  const created = createRoom({
-    name: "dev$mode!",
-    difficulty: "easy",
-    courseId: "meadow-run",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "dev$mode!"
   });
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    ...MEADOW_RUN_SINK_SHOT
-  });
+  startTestRoom(created);
+  finishRound(getSession(created));
 
   assert.equal(listRooms().length, 1);
   t.mock.timers.tick(30_000);
   assert.equal(listRooms().length, 0);
 });
 
-test("rounds stay active until every remaining player finishes the hole", () => {
-  const created = createRoom({
-    name: "dev$mode!",
-    difficulty: "easy",
-    courseId: "meadow-run",
-    questionSource: "local"
+test("rounds stay active until every remaining player finishes the round", () => {
+  const created = createTestRoom({
+    name: "dev$mode!"
   });
-
   const joined = joinRoom({
     roomCode: created.roomCode,
     name: "Guest"
   });
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  startTestRoom(created);
 
-  const hostFinished = takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    ...MEADOW_RUN_SINK_SHOT
-  });
+  const hostFinished = finishRound(getSession(created));
 
   assert.equal(hostFinished.state.room.status, "active");
   assert.equal(hostFinished.state.room.winnerId, created.playerId);
@@ -1056,48 +928,23 @@ test("rounds stay active until every remaining player finishes the hole", () => 
   assert.throws(
     () =>
       submitAnswer({
-        roomCode: created.roomCode,
-        playerId: created.playerId,
-        sessionId: created.sessionId,
+        ...getSession(created),
         submission: SOLUTIONS.contains_duplicate
       }),
-    /already finished the hole/
+    /finished the round/
   );
 
   assert.throws(
     () =>
       takeSwing({
-        roomCode: created.roomCode,
-        playerId: created.playerId,
-        sessionId: created.sessionId,
-        ...MEADOW_RUN_SINK_SHOT
+        ...getSession(created),
+        ...getCourseSinkPlan(DEFAULT_COURSE_ID)[0]
       }),
-    /already finished the hole/
+    /finished the round/
   );
 
-  const guestState = getRoomState({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId
-  });
-
-  const guestQuestionName = guestState.me.currentQuestion.functionName;
-  const guestSolved = submitAnswer({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
-    submission: SOLUTIONS[guestQuestionName]
-  });
-
-  assert.equal(guestSolved.evaluation.passed, true);
-  assert.equal(guestSolved.state.me.swingCredits, 1);
-
-  const guestFinished = takeSwing({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
-    ...MEADOW_RUN_SINK_SHOT
-  });
+  earnSwingCredits(getSession(joined), getCourseSinkPlan(DEFAULT_COURSE_ID).length);
+  const guestFinished = finishRound(getSession(joined));
 
   assert.equal(guestFinished.state.room.status, "finished");
   assert.equal(guestFinished.state.room.finishedPlayers, 2);
@@ -1110,43 +957,23 @@ test("rounds stay active until every remaining player finishes the hole", () => 
 });
 
 test("a round finishes once unfinished guests leave and all remaining players are done", () => {
-  const created = createRoom({
-    name: "dev$mode!",
-    difficulty: "easy",
-    courseId: "meadow-run",
-    questionSource: "local"
+  const created = createTestRoom({
+    name: "dev$mode!"
   });
-
   const joined = joinRoom({
     roomCode: created.roomCode,
     name: "Guest"
   });
 
-  startRoom({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
-
-  takeSwing({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId,
-    ...MEADOW_RUN_SINK_SHOT
-  });
+  startTestRoom(created);
+  finishRound(getSession(created));
 
   disconnectPlayerSession({
-    roomCode: created.roomCode,
-    playerId: joined.playerId,
-    sessionId: joined.sessionId,
+    ...getSession(joined),
     immediate: true
   });
 
-  const hostState = getRoomState({
-    roomCode: created.roomCode,
-    playerId: created.playerId,
-    sessionId: created.sessionId
-  });
+  const hostState = getRoomState(getSession(created));
 
   assert.equal(hostState.room.status, "finished");
   assert.equal(hostState.room.finishedPlayers, 1);

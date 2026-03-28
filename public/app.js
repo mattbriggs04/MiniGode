@@ -60,6 +60,11 @@ const state = {
   editorTheme: loadStorage(EDITOR_THEME_KEY) ?? EDITOR_THEMES[0].id,
   problemPaneWidth: loadStorage(PROBLEM_PANE_WIDTH_KEY),
   editorTopHeight: loadStorage(EDITOR_TOP_HEIGHT_KEY),
+  viewedCourseIndex: 0,
+  leaderboardModalOpen: false,
+  lastRaceLeaderSignature: null,
+  lastSeenSwingId: null,
+  pendingCourseCenter: false,
   dragAim: null,
   shot: createDefaultShot(),
   swingAnimating: false,
@@ -70,6 +75,7 @@ let elements;
 let renderer;
 let codeEditor;
 let copyRoomFeedbackTimer;
+let raceBannerAnimationTimer;
 let resizeSession = null;
 const DRAG_POWER_DISTANCE = 260;
 const DRAG_START_RADIUS = 34;
@@ -179,16 +185,82 @@ function isPracticeMode() {
   return Boolean(state.practiceSession);
 }
 
+function getViewedCourseIndex() {
+  if (isPracticeMode()) {
+    return 0;
+  }
+
+  const activeIndex = state.me?.currentCourseIndex ?? state.room?.currentCourseIndex ?? 0;
+  return clamp(state.viewedCourseIndex ?? activeIndex, 0, state.room?.courseIds?.length ? state.room.courseIds.length - 1 : 0);
+}
+
+function getViewedCourseId() {
+  if (!state.room?.courseIds?.length) {
+    return null;
+  }
+
+  return state.room.courseIds[getViewedCourseIndex()] ?? null;
+}
+
 function getActiveGolfCourse() {
-  return state.room?.course ?? state.practiceSession?.course ?? null;
+  if (state.practiceSession) {
+    return state.practiceSession.course;
+  }
+
+  return getCatalogCourseById(getViewedCourseId()) ?? state.room?.course ?? null;
 }
 
 function getActiveGolfPlayer() {
-  return state.me ?? state.practiceSession?.player ?? null;
+  if (state.practiceSession) {
+    return state.practiceSession.player;
+  }
+
+  if (!state.me) {
+    return null;
+  }
+
+  const courseState = state.me.courseStates?.[getViewedCourseIndex()];
+  if (!courseState?.ball) {
+    return null;
+  }
+
+  return {
+    ...state.me,
+    ball: courseState.ball,
+    currentHoleStrokes: courseState.strokes ?? state.me.currentHoleStrokes,
+    distanceToHole: courseState.distanceToHole ?? state.me.distanceToHole,
+    progressPercent: courseState.progressPercent ?? state.me.progressPercent,
+    courseCompleted: Boolean(courseState.completed)
+  };
 }
 
 function getActiveGolfPlayers() {
-  return state.room?.players ?? (state.practiceSession ? [state.practiceSession.player] : []);
+  if (state.practiceSession) {
+    return [state.practiceSession.player];
+  }
+
+  if (!state.room?.players?.length) {
+    return [];
+  }
+
+  const viewedCourseIndex = getViewedCourseIndex();
+  return state.room.players
+    .map((player) => {
+      const courseState = player.courseStates?.[viewedCourseIndex];
+      if (!courseState?.ball) {
+        return null;
+      }
+
+      return {
+        ...player,
+        ball: courseState.ball,
+        currentHoleStrokes: courseState.strokes ?? player.currentHoleStrokes,
+        distanceToHole: courseState.distanceToHole ?? player.distanceToHole,
+        progressPercent: courseState.progressPercent ?? player.progressPercent,
+        courseCompleted: Boolean(courseState.completed)
+      };
+    })
+    .filter(Boolean);
 }
 
 function getCatalogCourseById(courseId) {
@@ -229,18 +301,7 @@ function resetPracticeHole() {
   state.dragAim = null;
   state.swingAnimating = false;
   state.shot = createDefaultShot();
-}
-
-function syncRangeFill(input) {
-  if (!input) {
-    return;
-  }
-
-  const min = Number(input.min ?? 0);
-  const max = Number(input.max ?? 100);
-  const value = Number(input.value ?? min);
-  const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
-  input.style.setProperty("--range-fill", `${clamp(percent, 0, 100)}%`);
+  state.pendingCourseCenter = true;
 }
 
 function formatTestValue(value) {
@@ -862,6 +923,20 @@ function createShell() {
             </form>
           </section>
         </aside>
+
+        <div id="leaderboard-modal" class="leaderboard-modal" hidden>
+          <button id="leaderboard-modal-backdrop" type="button" class="leaderboard-modal__backdrop" aria-label="Close leaderboard"></button>
+          <section class="panel leaderboard-modal__panel" aria-modal="true" role="dialog" aria-labelledby="leaderboard-modal-title">
+            <div class="leaderboard-modal__header">
+              <div>
+                <p class="panel-kicker">Leaderboard</p>
+                <h3 id="leaderboard-modal-title">Live standings</h3>
+              </div>
+              <button id="leaderboard-modal-close-btn" type="button" class="chat-close" aria-label="Close leaderboard">×</button>
+            </div>
+            <div id="leaderboard-modal-body" class="leaderboard-modal__body"></div>
+          </section>
+        </div>
       </main>
     </div>
   `;
@@ -941,7 +1016,11 @@ function createShell() {
     chatNotice: document.getElementById("chat-notice"),
     chatEndButton: document.getElementById("chat-end-btn"),
     chatForm: document.getElementById("chat-form"),
-    chatInput: document.getElementById("chat-input")
+    chatInput: document.getElementById("chat-input"),
+    leaderboardModal: document.getElementById("leaderboard-modal"),
+    leaderboardModalBody: document.getElementById("leaderboard-modal-body"),
+    leaderboardModalBackdrop: document.getElementById("leaderboard-modal-backdrop"),
+    leaderboardModalCloseButton: document.getElementById("leaderboard-modal-close-btn")
   };
 
   elements.editorThemeSelect.innerHTML = EDITOR_THEMES.map(
@@ -982,6 +1061,8 @@ function createShell() {
   elements.chatInput.addEventListener("input", onChatInput);
   elements.chatInput.addEventListener("keydown", onChatInputKeyDown);
   elements.chatForm.addEventListener("submit", onSendChatMessage);
+  elements.leaderboardModalBackdrop.addEventListener("click", () => setLeaderboardModalOpen(false));
+  elements.leaderboardModalCloseButton.addEventListener("click", () => setLeaderboardModalOpen(false));
   window.addEventListener("pointermove", onResizePointerMove);
   window.addEventListener("pointerup", onResizePointerUp);
   window.addEventListener("pointercancel", onResizePointerUp);
@@ -1196,15 +1277,43 @@ function syncQuestionDraft() {
 }
 
 function applyRoomState(payload) {
+  const previousRoom = state.room;
+  const previousMe = state.me;
+  const previousViewedCourseIndex = state.viewedCourseIndex ?? 0;
+  const wasFollowingCurrentCourse =
+    previousMe && previousRoom ? previousViewedCourseIndex === (previousMe.currentCourseIndex ?? previousRoom.currentCourseIndex ?? 0) : true;
+
   state.practiceSession = null;
   state.room = payload.room;
   state.me = payload.me;
   state.dragAim = null;
+
+  if (payload.room?.courseIds?.length && payload.me) {
+    const maxUnlockedCourseIndex = payload.me.currentCourseIndex ?? 0;
+    if (wasFollowingCurrentCourse || previousMe?.currentCourseIndex === undefined) {
+      state.viewedCourseIndex = maxUnlockedCourseIndex;
+    } else {
+      state.viewedCourseIndex = clamp(previousViewedCourseIndex, 0, maxUnlockedCourseIndex);
+    }
+  } else {
+    state.viewedCourseIndex = 0;
+  }
+
+  state.pendingCourseCenter =
+    previousViewedCourseIndex !== state.viewedCourseIndex ||
+    previousMe?.currentCourseIndex !== payload.me?.currentCourseIndex;
+
+  if (payload.room?.status === "active" && !payload.me?.currentQuestion) {
+    state.gameScreen = "golf";
+  }
+
   if (isRoomOver(payload.room?.status)) {
     state.chatOpen = false;
+    state.leaderboardModalOpen = false;
   }
   syncQuestionDraft();
   renderViews();
+  maybeReplayRecentSwing();
   updateLiveTimerLabels();
 }
 
@@ -1237,7 +1346,22 @@ function syncShellPresentation(stage) {
 
 function setGameScreen(screen) {
   state.gameScreen = screen;
+  if (screen === "golf") {
+    state.pendingCourseCenter = true;
+  }
   renderGame();
+}
+
+function setViewedCourseIndex(courseIndex) {
+  if (!state.room?.courseIds?.length || !state.me) {
+    return;
+  }
+
+  state.viewedCourseIndex = clamp(courseIndex, 0, state.me.currentCourseIndex ?? 0);
+  state.pendingCourseCenter = true;
+  if (getCurrentStage() === "golf") {
+    renderGame();
+  }
 }
 
 function requestEditorLayout() {
@@ -1381,6 +1505,22 @@ function formatCredits(credits) {
   return `${credits} swing credit${credits === 1 ? "" : "s"}`;
 }
 
+function isViewingCurrentCourse() {
+  if (isPracticeMode()) {
+    return true;
+  }
+
+  return getViewedCourseIndex() === (state.me?.currentCourseIndex ?? 0);
+}
+
+function hasCompletedViewedCourse() {
+  if (isPracticeMode()) {
+    return Boolean(state.practiceSession?.player?.ball?.sunk);
+  }
+
+  return Boolean(state.me?.courseStates?.[getViewedCourseIndex()]?.completed);
+}
+
 function canTakeSwing() {
   if (isPracticeMode()) {
     return Boolean(state.practiceSession?.player && !state.practiceSession.player.ball.sunk);
@@ -1390,7 +1530,9 @@ function canTakeSwing() {
     state.room &&
       state.me &&
       state.room.status === "active" &&
-      !state.me.ball.sunk &&
+      !state.me.finishPlace &&
+      isViewingCurrentCourse() &&
+      !hasCompletedViewedCourse() &&
       (state.me.devModeEnabled || state.me.swingCredits >= 1)
   );
 }
@@ -1410,7 +1552,7 @@ function formatPlace(value) {
   return `${value}th`;
 }
 
-function getLeadingPlayers() {
+function getStandingsLeadingPlayers() {
   if (!state.room?.players?.length) {
     return [];
   }
@@ -1421,6 +1563,19 @@ function getLeadingPlayers() {
   }
 
   return state.room.players[0] ? [state.room.players[0]] : [];
+}
+
+function getRaceLeadingPlayers() {
+  if (!state.room?.players?.length) {
+    return [];
+  }
+
+  if (Array.isArray(state.room.raceLeaderIds) && state.room.raceLeaderIds.length) {
+    const leaderIds = new Set(state.room.raceLeaderIds);
+    return state.room.players.filter((player) => leaderIds.has(player.id));
+  }
+
+  return state.room.players;
 }
 
 function getLeaderboardRank(player, fallbackIndex) {
@@ -1474,6 +1629,57 @@ function renderGameTimerHud() {
       <strong data-room-countdown>${escapeHtml(formatCountdownClock(getLiveRoomTimerMs() ?? 0))}</strong>
     </section>
   `;
+}
+
+function renderRaceBanner() {
+  const visible = Boolean(
+    state.room &&
+      state.me &&
+      state.room.status === "active" &&
+      (getCurrentStage() === "challenge" || getCurrentStage() === "golf")
+  );
+
+  elements.gameBanner.hidden = !visible;
+  if (!visible) {
+    elements.gameBanner.textContent = "";
+    state.lastRaceLeaderSignature = null;
+    clearTimeout(raceBannerAnimationTimer);
+    return;
+  }
+
+  const leaders = getRaceLeadingPlayers();
+  const everyoneTied = leaders.length === state.room.players.length;
+  const leader = leaders.length === 1 ? leaders[0] : null;
+  const title = everyoneTied
+    ? "Everyone is tied."
+    : leader
+      ? `${leader.name} leads the race.`
+      : `${formatLeaderNames(leaders)} are tied for the lead.`;
+  const body = everyoneTied
+    ? `No one has broken away yet. Furthest course wins; on the same course, the closest ball leads.`
+    : leader
+      ? `Course ${leader.currentCourseNumber}/${leader.holesTotal} • ${leader.distanceToHole} from the hole`
+      : `They are level on the same race position right now.`;
+  const signature = everyoneTied
+    ? `all:${state.room.players.length}`
+    : leaders.map((player) => player.id).sort().join(",");
+
+  elements.gameBanner.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <span>${escapeHtml(body)}</span>
+  `;
+
+  if (state.lastRaceLeaderSignature && state.lastRaceLeaderSignature !== signature) {
+    elements.gameBanner.classList.remove("winner-banner--pulse");
+    void elements.gameBanner.offsetWidth;
+    elements.gameBanner.classList.add("winner-banner--pulse");
+    clearTimeout(raceBannerAnimationTimer);
+    raceBannerAnimationTimer = window.setTimeout(() => {
+      elements.gameBanner.classList.remove("winner-banner--pulse");
+    }, 700);
+  }
+
+  state.lastRaceLeaderSignature = signature;
 }
 
 function setChatOpen(nextOpen) {
@@ -1543,6 +1749,78 @@ function renderChatDock() {
   }
 }
 
+function setLeaderboardModalOpen(nextOpen) {
+  state.leaderboardModalOpen = nextOpen;
+  renderLeaderboardModal();
+}
+
+function leaderboardDetailRowMarkup(player, index) {
+  const solvedCounts = player.solvedCountsByDifficulty ?? {};
+  const difficultySummary = state.bootstrap.difficulties
+    .map((difficulty) => `${formatDifficulty(difficulty)} ${solvedCounts[difficulty] ?? 0}`)
+    .join(" • ");
+
+  return `
+    <article class="leaderboard-detail-row ${player.id === state.me.id ? "is-me" : ""}">
+      <div class="leaderboard-detail-row__header">
+        <div class="leaderboard-detail-row__identity">
+          <span class="standing-rank">${getLeaderboardRank(player, index)}</span>
+          <span class="player-color" style="background:${player.color}"></span>
+          <div>
+            <strong>${escapeHtml(player.name)}</strong>
+            <p>${escapeHtml(player.holesCompleted === player.holesTotal ? "Round complete" : `Course ${player.currentCourseNumber}/${player.holesTotal}`)}</p>
+          </div>
+        </div>
+        <span class="course-status-pill">${escapeHtml(isTiedForLead(player) ? "Tied lead" : `Rank ${getLeaderboardRank(player, index)}`)}</span>
+      </div>
+      <div class="leaderboard-detail-grid">
+        <div class="results-stat">
+          <span>Questions</span>
+          <strong>${player.solvedCount}</strong>
+        </div>
+        <div class="results-stat">
+          <span>By Difficulty</span>
+          <strong>${escapeHtml(difficultySummary)}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Course Swings</span>
+          <strong>${player.currentHoleStrokes}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Total Strokes</span>
+          <strong>${player.strokes}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Courses</span>
+          <strong>${player.holesCompleted}/${player.holesTotal}</strong>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderLeaderboardModal() {
+  const visible = Boolean(state.leaderboardModalOpen && state.room?.players?.length && !isPracticeMode());
+  elements.leaderboardModal.hidden = !visible;
+  if (!visible) {
+    return;
+  }
+
+  elements.leaderboardModalBody.innerHTML = state.room.players.map(leaderboardDetailRowMarkup).join("");
+}
+
+function bindLeaderboardTriggers() {
+  document.querySelectorAll("[data-open-leaderboard-modal]").forEach((node) => {
+    node.addEventListener("click", () => setLeaderboardModalOpen(true));
+    node.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setLeaderboardModalOpen(true);
+      }
+    });
+  });
+}
+
 function getRemainingPlayersCount() {
   if (!state.room) {
     return 0;
@@ -1556,12 +1834,12 @@ function getCourseStatusCard() {
     return null;
   }
 
-  const leaders = getLeadingPlayers();
+  const leaders = getRaceLeadingPlayers();
   const winner = leaders.length === 1 ? leaders[0] : null;
   const remainingPlayers = getRemainingPlayersCount();
-  const opponentsStillPlaying = state.me.ball.sunk ? remainingPlayers : Math.max(remainingPlayers - 1, 0);
+  const opponentsStillPlaying = state.me.finishPlace ? remainingPlayers : Math.max(remainingPlayers - 1, 0);
   const totalCourses = state.room.totalCourses ?? 1;
-  const currentCourseNumber = state.room.currentCourseNumber ?? 1;
+  const currentCourseNumber = state.me.currentCourseNumber ?? state.room.currentCourseNumber ?? 1;
   const hasMoreCourses = currentCourseNumber < totalCourses;
 
   if (state.room.players.length === 1) {
@@ -1578,13 +1856,13 @@ function getCourseStatusCard() {
       };
     }
 
-    if (state.me.ball.sunk && hasMoreCourses) {
+    if (state.me.finishPlace && hasMoreCourses) {
       return {
         tone: "clubhouse",
-        eyebrow: "Course Complete",
-        title: "Next course loading.",
-        body: `Course ${currentCourseNumber} is done. The round will continue on course ${currentCourseNumber + 1} shortly.`,
-        pill: `${currentCourseNumber}/${totalCourses}`
+        eyebrow: "Round Complete",
+        title: "The round is complete for you.",
+        body: `You cleared all ${totalCourses} courses. You can keep viewing unlocked courses while the room settles.`,
+        pill: "Complete"
       };
     }
 
@@ -1611,26 +1889,16 @@ function getCourseStatusCard() {
     };
   }
 
-  if (state.me.ball.sunk) {
-    if (remainingPlayers === 0 && hasMoreCourses) {
-      return {
-        tone: "clubhouse",
-        eyebrow: "Course Complete",
-        title: "Next course loading.",
-        body: `Everyone finished course ${currentCourseNumber}. Course ${currentCourseNumber + 1} starts automatically.`,
-        pill: `${currentCourseNumber}/${totalCourses}`
-      };
-    }
-
+  if (state.me.finishPlace) {
     return {
       tone: "clubhouse",
-      eyebrow: "In The Clubhouse",
-      title: state.me.finishPlace === 1 ? "You set the pace." : `You finished ${formatPlace(state.me.finishPlace ?? 1)}.`,
+      eyebrow: "Round Complete",
+      title: "The round is complete for you.",
       body:
         remainingPlayers === 0
-          ? "The rest of the room is catching up."
-          : `Watch ${remainingPlayers} remaining player${remainingPlayers === 1 ? "" : "s"} finish course ${currentCourseNumber}.`,
-      pill: state.me.finishPlace ? formatPlace(state.me.finishPlace) : "Finished"
+          ? "The rest of the room is wrapping up."
+          : `Watch ${remainingPlayers} remaining player${remainingPlayers === 1 ? "" : "s"} finish the rest of the round.`,
+      pill: "View only"
     };
   }
 
@@ -1706,13 +1974,13 @@ function standingsPanelMarkup() {
   }
 
   return `
-    <section class="standings-panel">
+    <section class="standings-panel standings-panel--interactive" data-open-leaderboard-modal="true" tabindex="0" role="button" aria-label="Open live leaderboard details">
       <div class="standings-panel__header">
         <div>
           <p class="panel-kicker">Standings</p>
           <h3>Live leaderboard</h3>
         </div>
-        <span class="course-status-pill">${state.room.finishedPlayers}/${state.room.players.length} finished</span>
+        <span class="course-status-pill">Click to expand</span>
       </div>
       <div class="standings-list">
         ${state.room.players.map(playerStandingMarkup).join("")}
@@ -1730,9 +1998,10 @@ function getResultsSummary() {
     };
   }
 
-  const leaders = getLeadingPlayers();
+  const leaders = getStandingsLeadingPlayers();
   const leader = leaders.length === 1 ? leaders[0] : null;
   const leaderNames = formatLeaderNames(leaders);
+  const winnerReason = state.room.winnerReason ? ` Win condition: ${state.room.winnerReason}.` : "";
 
   if (state.room.status === "timed_out") {
     if (!leader) {
@@ -1752,7 +2021,7 @@ function getResultsSummary() {
         leader?.id === state.me.id
           ? "Time is up. You lead the final leaderboard."
           : `Time is up. ${leader?.name ?? "The room leader"} finished on top.`,
-      body: "Players are ranked by courses completed first, then current-course progress, then total strokes and solved questions."
+      body: `Players are ranked by courses completed first, then current-course progress, then total strokes and solved questions.${winnerReason}`
     };
   }
 
@@ -1771,7 +2040,7 @@ function getResultsSummary() {
     return {
       eyebrow: "Game Ended",
       title: leader?.id === state.me.id ? "The game ended with you on top." : `${leader?.name ?? "A player"} led when the game ended.`,
-      body: "The room was ended early, so the standings below capture the current state of the round."
+      body: `The room was ended early, so the standings below capture the current state of the round.${winnerReason}`
     };
   }
 
@@ -1795,8 +2064,8 @@ function getResultsSummary() {
           : `${leader?.name ?? "A player"} won the hole.`,
     body:
       state.room.totalCourses > 1
-        ? "Everyone finished all courses. Final standings are locked in below."
-        : "Everyone finished the course. Final standings are locked in below."
+        ? `Everyone finished all courses. Final standings are locked in below.${winnerReason}`
+        : `Everyone finished the course. Final standings are locked in below.${winnerReason}`
   };
 }
 
@@ -2104,7 +2373,7 @@ function renderProblemPanel() {
   const question = state.me.currentQuestion;
   const swingPayout = state.bootstrap?.swingCreditsByDifficulty?.[question.difficulty];
   const difficultySelectDisabled =
-    state.busy || state.me.ball.sunk || isRoomOver(state.room?.status);
+    state.busy || state.me.finishPlace || isRoomOver(state.room?.status);
 
   elements.problemPanel.innerHTML = `
     <div class="problem-header">
@@ -2196,7 +2465,7 @@ function renderProblemPanel() {
 
 function renderEditor() {
   const theme = getEditorTheme(state.editorTheme);
-  const spectatorMode = state.me.ball.sunk || isRoomOver();
+  const spectatorMode = Boolean(state.me.finishPlace || isRoomOver());
   const nextQuestionLabel =
     state.room?.difficultyMode === "player-choice"
       ? `Next ${formatDifficulty(state.me.activeDifficulty)} question`
@@ -2259,8 +2528,6 @@ function practiceStatusMarkup(player) {
 
 function renderPracticeGolfControls() {
   const player = state.practiceSession.player;
-  const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
-  const powerPercent = Math.round(state.shot.power * 100);
 
   elements.golfControlsPanel.innerHTML = `
     <p class="panel-kicker">Solo practice</p>
@@ -2272,24 +2539,11 @@ function renderPracticeGolfControls() {
 
     ${practiceStatusMarkup(player)}
 
-    ${
-      player.ball.sunk
-        ? ""
-        : `
-          <div class="shot-controls">
-            <label>
-              Angle
-              <span id="angle-value" class="value-label">${angleDegrees}&deg;</span>
-              <input id="angle-input" type="range" min="0" max="359" value="${angleDegrees}">
-            </label>
-            <label>
-              Power
-              <span id="power-value" class="value-label">${powerPercent}%</span>
-              <input id="power-input" type="range" min="5" max="100" value="${powerPercent}">
-            </label>
-          </div>
-        `
-    }
+    <section class="aim-note-card">
+      <p class="panel-kicker">Aiming</p>
+      <h3>Drag back from the ball</h3>
+      <p>Drag on the course to set direction and power, then release and click Take swing.</p>
+    </section>
 
     <section class="practice-stats">
       <div class="setting-row"><span>Course</span><strong>${escapeHtml(state.practiceSession.course.name)}</strong></div>
@@ -2304,21 +2558,7 @@ function renderPracticeGolfControls() {
     </div>
   `;
 
-  const angleInput = document.getElementById("angle-input");
-  const powerInput = document.getElementById("power-input");
   const swingButton = document.getElementById("swing-btn");
-
-  angleInput?.addEventListener("input", () => {
-    state.shot.angle = (Number(angleInput.value) * Math.PI) / 180;
-    syncShotControlLabels();
-    drawCourse();
-  });
-
-  powerInput?.addEventListener("input", () => {
-    state.shot.power = Number(powerInput.value) / 100;
-    syncShotControlLabels();
-    drawCourse();
-  });
 
   swingButton?.addEventListener("click", onTakeSwing);
   if (swingButton) {
@@ -2326,7 +2566,6 @@ function renderPracticeGolfControls() {
   }
   document.getElementById("practice-reset-btn")?.addEventListener("click", onResetPracticeHole);
   document.getElementById("practice-home-btn")?.addEventListener("click", () => leavePractice());
-  syncShotControlLabels();
 }
 
 function renderGolfControls() {
@@ -2335,82 +2574,78 @@ function renderGolfControls() {
     return;
   }
 
-  const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
-  const powerPercent = Math.round(state.shot.power * 100);
-  const spectatorMode = state.me.ball.sunk || isRoomOver();
+  const viewedCourseIndex = getViewedCourseIndex();
+  const canStepBackward = viewedCourseIndex > 0;
+  const canStepForward = viewedCourseIndex < (state.me.currentCourseIndex ?? 0);
+  const viewOnlyMode = !isViewingCurrentCourse() || Boolean(state.me.finishPlace);
+  const spectatorMode = viewOnlyMode || isRoomOver();
   const statusCard = courseStatusCardMarkup();
   const standingsCard = standingsPanelMarkup();
+  const viewModeCard = spectatorMode
+    ? `
+        <section class="spectator-card">
+          <p class="panel-kicker">${isRoomOver() ? "Round Review" : "View Only"}</p>
+          <h3>${
+            isRoomOver()
+              ? "Final round results"
+              : state.me.finishPlace
+                ? "Your round is complete"
+                : "Browsing an unlocked course"
+          }</h3>
+          <p>${
+            isRoomOver()
+              ? "Swing controls are disabled because the round is over."
+              : state.me.finishPlace
+                ? "You can keep following the room from any unlocked course while the rest of the players finish."
+                : "You can look backward through unlocked courses, but swings only work on your current playable course."
+          }</p>
+        </section>
+      `
+    : `
+        <section class="aim-note-card">
+          <p class="panel-kicker">Aiming</p>
+          <h3>Drag back from the ball</h3>
+          <p>Drag on the course to set direction and power, then release and click Take swing.</p>
+        </section>
+      `;
 
   elements.golfControlsPanel.innerHTML = `
     <p class="panel-kicker">Shot controls</p>
     <h2>Take your swing</h2>
     <div class="shot-summary">
       <span>${formatCredits(state.me.swingCredits)}</span>
-      <span>Course ${state.room.currentCourseNumber}/${state.room.totalCourses} • ${state.me.strokes} total stroke${state.me.strokes === 1 ? "" : "s"}</span>
+      <span>Viewing course ${viewedCourseIndex + 1}/${state.room.totalCourses} • Active course ${state.me.currentCourseNumber}/${state.room.totalCourses}</span>
     </div>
 
     ${statusCard}
+    ${viewModeCard}
 
-    ${
-      spectatorMode
-        ? `
-          <section class="spectator-card">
-            <p class="panel-kicker">Spectator Mode</p>
-            <h3>${isRoomOver() ? "Final round results" : "Watch the rest of the course"}</h3>
-            <p>${isRoomOver()
-              ? "Swing controls are disabled because the round is over."
-              : "Your ball is off the course for now. Stay on the golf view to watch the remaining players finish this course."}</p>
-          </section>
-        `
-        : `
-          <div class="shot-controls">
-            <label>
-              Angle
-              <span id="angle-value" class="value-label">${angleDegrees}&deg;</span>
-              <input id="angle-input" type="range" min="0" max="359" value="${angleDegrees}">
-            </label>
-            <label>
-              Power
-              <span id="power-value" class="value-label">${powerPercent}%</span>
-              <input id="power-input" type="range" min="5" max="100" value="${powerPercent}">
-            </label>
-          </div>
-        `
-    }
+    <div class="course-nav-actions">
+      <button id="course-prev-btn" type="button" class="secondary"${canStepBackward ? "" : " disabled"}>Prev course</button>
+      <button id="course-next-btn" type="button" class="secondary"${canStepForward ? "" : " disabled"}>Next course</button>
+    </div>
 
     ${standingsCard}
 
     <button id="swing-btn" type="button" class="primary">Take swing</button>
-    <button id="golf-to-problem-btn" type="button" class="course-switch-button">Back to problem</button>
+    <button id="golf-to-problem-btn" type="button" class="course-switch-button"${state.me.currentQuestion ? "" : " hidden"}>Back to problem</button>
   `;
 
-  const angleInput = document.getElementById("angle-input");
-  const powerInput = document.getElementById("power-input");
   const swingButton = document.getElementById("swing-btn");
-
-  angleInput?.addEventListener("input", () => {
-    state.shot.angle = (Number(angleInput.value) * Math.PI) / 180;
-    syncShotControlLabels();
-    drawCourse();
-  });
-
-  powerInput?.addEventListener("input", () => {
-    state.shot.power = Number(powerInput.value) / 100;
-    syncShotControlLabels();
-    drawCourse();
-  });
 
   swingButton.disabled =
     spectatorMode ||
     !canTakeSwing() ||
     isRoomOver() ||
-    state.me.ball.sunk ||
+    state.me.finishPlace ||
     state.busy ||
     state.swingAnimating;
   swingButton.hidden = spectatorMode;
   swingButton.addEventListener("click", onTakeSwing);
+  document.getElementById("course-prev-btn")?.addEventListener("click", () => setViewedCourseIndex(viewedCourseIndex - 1));
+  document.getElementById("course-next-btn")?.addEventListener("click", () => setViewedCourseIndex(viewedCourseIndex + 1));
   document.getElementById("golf-to-problem-btn")?.addEventListener("click", () => setGameScreen("challenge"));
-  syncShotControlLabels();
+  bindLeaderboardTriggers();
 }
 
 function drawCourse() {
@@ -2429,22 +2664,51 @@ function drawCourse() {
   renderer.render({
     course,
     players: getActiveGolfPlayers(),
-    meId: player.id,
+    meId: state.me?.id ?? player.id,
     mePlayer: player,
     preview:
-      (isPracticeMode() || state.room.status === "active") &&
+      canTakeSwing() &&
       !player.ball.sunk &&
       !state.swingAnimating
         ? state.shot
         : null,
     dragAim: state.dragAim
   });
+
+  if (state.pendingCourseCenter) {
+    state.pendingCourseCenter = false;
+    requestAnimationFrame(() => renderer.centerOnPoint(player.ball));
+  }
+}
+
+function maybeReplayRecentSwing() {
+  const swing = state.room?.recentSwing;
+  if (
+    !swing ||
+    swing.id === state.lastSeenSwingId ||
+    swing.playerId === state.me?.id ||
+    getCurrentStage() !== "golf" ||
+    getViewedCourseIndex() !== swing.courseIndex
+  ) {
+    return;
+  }
+
+  state.lastSeenSwingId = swing.id;
+  requestAnimationFrame(() => {
+    drawCourse();
+    renderer.playSwing(swing.path, {
+      playerId: swing.playerId,
+      onComplete() {
+        if (getCurrentStage() === "golf") {
+          drawCourse();
+          renderGolfControls();
+        }
+      }
+    });
+  });
 }
 
 function renderGame() {
-  elements.gameBanner.hidden = true;
-  elements.gameBanner.textContent = "";
-
   const showingGolf = state.gameScreen === "golf";
   elements.challengeScreen.hidden = showingGolf;
   elements.golfScreen.hidden = !showingGolf;
@@ -2453,7 +2717,7 @@ function renderGame() {
   if (showingGolf) {
     renderGolfControls();
     elements.courseName.textContent = state.room
-      ? `${getActiveGolfCourse()?.name ?? ""} • Course ${state.room.currentCourseNumber}/${state.room.totalCourses}`
+      ? `${getActiveGolfCourse()?.name ?? ""} • Course ${getViewedCourseIndex() + 1}/${state.room.totalCourses}`
       : getActiveGolfCourse()?.name ?? "";
     requestAnimationFrame(() => drawCourse());
   } else {
@@ -2465,6 +2729,8 @@ function renderGame() {
       codeEditor?.layout();
     });
   }
+
+  renderRaceBanner();
 }
 
 function renderViews() {
@@ -2477,22 +2743,25 @@ function renderViews() {
   elements.challengeScreen.hidden = stage !== "challenge";
   elements.golfScreen.hidden = stage !== "golf";
   elements.resultsScreen.hidden = stage !== "results";
-  elements.gameBanner.hidden = true;
   renderChatDock();
   renderGameTimerHud();
+  renderLeaderboardModal();
 
   if (stage === "home") {
     syncLandingTabs();
+    renderRaceBanner();
     return;
   }
 
   if (stage === "waiting") {
     renderWaitingRoom();
+    renderRaceBanner();
     return;
   }
 
   if (stage === "results") {
     renderResultsScreen();
+    renderRaceBanner();
     return;
   }
 
@@ -2510,8 +2779,13 @@ function resetSharedGameState() {
   state.chatDraft = "";
   state.chatNotice = null;
   state.chatOpen = false;
+  state.leaderboardModalOpen = false;
   state.editorReady = false;
   state.gameScreen = "challenge";
+  state.viewedCourseIndex = 0;
+  state.lastRaceLeaderSignature = null;
+  state.lastSeenSwingId = null;
+  state.pendingCourseCenter = false;
   state.dragAim = null;
   state.swingAnimating = false;
   state.shot = createDefaultShot();
@@ -2532,6 +2806,7 @@ function startPracticeSession(courseId, name) {
   resetSharedGameState();
   state.practiceSession = createPracticeSession(course, name);
   state.gameScreen = "golf";
+  state.pendingCourseCenter = true;
   setEditorValue("");
   renderViews();
 }
@@ -2691,7 +2966,7 @@ async function onStartGame() {
 }
 
 async function onSubmitSolution(scope = "all") {
-  if (!state.session || state.busy || !state.editorReady || state.me?.ball.sunk || isRoomOver(state.room?.status)) {
+  if (!state.session || state.busy || !state.editorReady || state.me?.finishPlace || isRoomOver(state.room?.status)) {
     return;
   }
 
@@ -2728,7 +3003,7 @@ async function onSubmitSolution(scope = "all") {
 }
 
 async function onAdvanceQuestion() {
-  if (!state.session || state.busy || !state.me?.awaitingNextQuestion || state.me?.ball.sunk || isRoomOver(state.room?.status)) {
+  if (!state.session || state.busy || !state.me?.awaitingNextQuestion || state.me?.finishPlace || isRoomOver(state.room?.status)) {
     return;
   }
 
@@ -2767,7 +3042,7 @@ async function onProblemDifficultyChange(event) {
     state.busy ||
     state.room?.difficultyMode !== "player-choice" ||
     nextDifficulty === state.me.activeDifficulty ||
-    state.me.ball.sunk ||
+    state.me.finishPlace ||
     isRoomOver(state.room?.status)
   ) {
     event.target.value = state.me?.activeDifficulty ?? nextDifficulty;
@@ -2826,12 +3101,16 @@ async function onTakeSwing() {
 
     requestAnimationFrame(() => {
       drawCourse();
-      renderer.playSwing(simulation.path, () => {
-        state.busy = false;
-        state.swingAnimating = false;
-        if (getCurrentStage() === "golf" && isPracticeMode()) {
-          drawCourse();
-          renderGolfControls();
+      renderer.playSwing(simulation.path, {
+        playerId: player.id,
+        onComplete: () => {
+          state.pendingCourseCenter = true;
+          state.busy = false;
+          state.swingAnimating = false;
+          if (getCurrentStage() === "golf" && isPracticeMode()) {
+            drawCourse();
+            renderGolfControls();
+          }
         }
       });
     });
@@ -2853,14 +3132,19 @@ async function onTakeSwing() {
       state.shot.power
     );
     applyRoomState(response.state);
+    state.lastSeenSwingId = response.state.room?.recentSwing?.id ?? state.lastSeenSwingId;
     state.swingAnimating = true;
     requestAnimationFrame(() => {
       drawCourse();
-      renderer.playSwing(response.swing.path, () => {
-        state.swingAnimating = false;
-        if (getCurrentStage() === "golf" && state.room && state.me) {
-          drawCourse();
-          renderGolfControls();
+      renderer.playSwing(response.swing.path, {
+        playerId: state.me.id,
+        onComplete: () => {
+          state.pendingCourseCenter = true;
+          state.swingAnimating = false;
+          if (getCurrentStage() === "golf" && state.room && state.me) {
+            drawCourse();
+            renderGolfControls();
+          }
         }
       });
     });
@@ -2883,33 +3167,6 @@ async function onTakeSwing() {
   }
 }
 
-function syncShotControlLabels() {
-  const angleDegrees = Math.round((((state.shot.angle * 180) / Math.PI) + 360) % 360);
-  const powerPercent = Math.round(state.shot.power * 100);
-  const angleValue = document.getElementById("angle-value");
-  const powerValue = document.getElementById("power-value");
-  const angleInput = document.getElementById("angle-input");
-  const powerInput = document.getElementById("power-input");
-
-  if (angleValue) {
-    angleValue.textContent = `${angleDegrees}\u00b0`;
-  }
-
-  if (powerValue) {
-    powerValue.textContent = `${powerPercent}%`;
-  }
-
-  if (angleInput && angleInput !== document.activeElement) {
-    angleInput.value = String(angleDegrees);
-  }
-  syncRangeFill(angleInput);
-
-  if (powerInput && powerInput !== document.activeElement) {
-    powerInput.value = String(powerPercent);
-  }
-  syncRangeFill(powerInput);
-}
-
 function canAimOnCourse() {
   if (isPracticeMode()) {
     const player = state.practiceSession?.player;
@@ -2927,7 +3184,9 @@ function canAimOnCourse() {
       state.me &&
       state.room.status === "active" &&
       state.gameScreen === "golf" &&
-      !state.me.ball.sunk &&
+      isViewingCurrentCourse() &&
+      !state.me.finishPlace &&
+      !hasCompletedViewedCourse() &&
       !state.busy &&
       !state.swingAnimating
   );
@@ -2947,7 +3206,6 @@ function updateShotFromDrag(startPoint, currentPoint) {
 
   state.shot.angle = shot.angle;
   state.shot.power = shot.power;
-  syncShotControlLabels();
   return true;
 }
 

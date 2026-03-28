@@ -1918,6 +1918,42 @@ body.is-resizing-panels * {
   align-content: start;
 }
 
+.course-viewport-tools {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+  min-width: max-content;
+}
+
+.course-viewport-tools .panel-kicker {
+  margin: 0;
+}
+
+.course-zoom-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.course-zoom-value {
+  min-width: 56px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(19, 39, 30, 0.08);
+  border: 1px solid rgba(19, 39, 30, 0.1);
+  color: var(--field-text);
+  font-weight: 700;
+  text-align: center;
+}
+
+.course-zoom-btn {
+  min-width: 52px;
+  margin-top: 0;
+  padding-inline: 14px;
+}
+
 .golf-canvas-shell {
   flex: 1 1 auto;
   min-height: 0;
@@ -2139,6 +2175,20 @@ body.theme-dark .aim-note-card {
 
   .editor-controls__prefs > *,
   .editor-controls__actions > button {
+    flex: 1 1 0;
+  }
+
+  .course-viewport-tools {
+    justify-items: stretch;
+    min-width: 0;
+  }
+
+  .course-zoom-actions {
+    justify-content: stretch;
+  }
+
+  .course-zoom-value,
+  .course-zoom-btn {
     flex: 1 1 0;
   }
 

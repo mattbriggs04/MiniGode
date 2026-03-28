@@ -65,6 +65,7 @@ const state = {
   lastRaceLeaderSignature: null,
   lastSeenSwingId: null,
   pendingCourseCenter: false,
+  courseZoom: 1,
   dragAim: null,
   shot: createDefaultShot(),
   swingAnimating: false,
@@ -88,6 +89,10 @@ const MIN_EDITOR_PANE_WIDTH = 420;
 const MIN_EDITOR_TOP_HEIGHT = 260;
 const MIN_EDITOR_TERMINAL_HEIGHT = 220;
 const ROOM_TIMER_TICK_MS = 1000;
+const DEFAULT_COURSE_ZOOM = 1;
+const MIN_COURSE_ZOOM = 0.25;
+const MAX_COURSE_ZOOM = 2.5;
+const COURSE_ZOOM_STEP = 0.2;
 const LANDING_TABS = [
   { id: "create", label: "Create room" },
   { id: "solo", label: "Solo" },
@@ -322,6 +327,14 @@ function formatDifficulty(value) {
 
 function formatDifficultyMode(value) {
   return value === "player-choice" ? "Player choice" : "Fixed difficulty";
+}
+
+function clampCourseZoom(value) {
+  return clamp(Number(value) || DEFAULT_COURSE_ZOOM, MIN_COURSE_ZOOM, MAX_COURSE_ZOOM);
+}
+
+function formatCourseZoom(value = state.courseZoom) {
+  return `${Math.round(clampCourseZoom(value) * 100)}%`;
 }
 
 function formatRoomDifficultySummary(room = state.room) {
@@ -879,6 +892,15 @@ function createShell() {
                       <h3 id="course-name"></h3>
                       <p class="muted">Drag backward from the ball to aim and set power. Each shot costs one swing credit.</p>
                     </div>
+                    <div class="course-viewport-tools" aria-label="Course zoom controls">
+                      <p class="panel-kicker">Zoom</p>
+                      <div class="course-zoom-actions">
+                        <span id="course-zoom-value" class="course-zoom-value">100%</span>
+                        <button id="course-zoom-out-btn" type="button" class="secondary course-zoom-btn" aria-label="Zoom out">-</button>
+                        <button id="course-zoom-fit-btn" type="button" class="secondary course-zoom-btn">Fit</button>
+                        <button id="course-zoom-in-btn" type="button" class="secondary course-zoom-btn" aria-label="Zoom in">+</button>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="golf-canvas-shell">
@@ -1006,6 +1028,10 @@ function createShell() {
     resultsScreen: document.getElementById("results-screen"),
     resultsPanel: document.getElementById("results-panel"),
     courseName: document.getElementById("course-name"),
+    courseZoomValue: document.getElementById("course-zoom-value"),
+    courseZoomOutButton: document.getElementById("course-zoom-out-btn"),
+    courseZoomFitButton: document.getElementById("course-zoom-fit-btn"),
+    courseZoomInButton: document.getElementById("course-zoom-in-btn"),
     courseCanvas: document.getElementById("course-canvas"),
     golfControlsPanel: document.getElementById("golf-controls-panel"),
     chatDock: document.getElementById("chat-dock"),
@@ -1048,6 +1074,9 @@ function createShell() {
   elements.editorThemeSelect.addEventListener("change", onEditorThemeChange);
   elements.resetCodeButton.addEventListener("click", onResetCode);
   elements.problemToGolfButton.addEventListener("click", () => setGameScreen("golf"));
+  elements.courseZoomOutButton.addEventListener("click", onZoomOutCourse);
+  elements.courseZoomFitButton.addEventListener("click", onResetCourseZoom);
+  elements.courseZoomInButton.addEventListener("click", onZoomInCourse);
   elements.challengeResizeHandle.addEventListener("pointerdown", onChallengeResizeStart);
   elements.editorResizeHandle.addEventListener("pointerdown", onEditorResizeStart);
   elements.courseCanvas.addEventListener("pointerdown", onCoursePointerDown);
@@ -1414,6 +1443,46 @@ function onWindowResize() {
   applyChallengeLayout();
   applyEditorLayout();
   requestEditorLayout();
+}
+
+function renderCourseZoomControls() {
+  if (!elements.courseZoomValue) {
+    return;
+  }
+
+  const courseZoom = clampCourseZoom(state.courseZoom);
+  elements.courseZoomValue.textContent = formatCourseZoom(courseZoom);
+  elements.courseZoomOutButton.disabled = courseZoom <= MIN_COURSE_ZOOM + 0.001;
+  elements.courseZoomFitButton.disabled = Math.abs(courseZoom - DEFAULT_COURSE_ZOOM) < 0.001;
+  elements.courseZoomInButton.disabled = courseZoom >= MAX_COURSE_ZOOM - 0.001;
+}
+
+function setCourseZoom(nextZoom) {
+  const courseZoom = clampCourseZoom(nextZoom);
+  if (Math.abs(courseZoom - state.courseZoom) < 0.001) {
+    renderCourseZoomControls();
+    return;
+  }
+
+  state.courseZoom = courseZoom;
+  renderCourseZoomControls();
+
+  if (getCurrentStage() === "golf") {
+    state.pendingCourseCenter = true;
+    requestAnimationFrame(() => drawCourse());
+  }
+}
+
+function onZoomOutCourse() {
+  setCourseZoom(state.courseZoom - COURSE_ZOOM_STEP);
+}
+
+function onResetCourseZoom() {
+  setCourseZoom(DEFAULT_COURSE_ZOOM);
+}
+
+function onZoomInCourse() {
+  setCourseZoom(state.courseZoom + COURSE_ZOOM_STEP);
 }
 
 function onChallengeResizeStart(event) {
@@ -2663,6 +2732,7 @@ function drawCourse() {
 
   renderer.render({
     course,
+    zoom: state.courseZoom,
     players: getActiveGolfPlayers(),
     meId: state.me?.id ?? player.id,
     mePlayer: player,
@@ -2713,6 +2783,7 @@ function renderGame() {
   elements.challengeScreen.hidden = showingGolf;
   elements.golfScreen.hidden = !showingGolf;
   elements.resultsScreen.hidden = true;
+  renderCourseZoomControls();
 
   if (showingGolf) {
     renderGolfControls();

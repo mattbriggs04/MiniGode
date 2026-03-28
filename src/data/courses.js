@@ -1,5 +1,33 @@
 const courseCatalog = [
     {
+      id: "test-course-2",
+      name: "Test Course 2",
+      description: "Wide Course.",
+      width: 2000,
+      height: 380,
+      tee: { x: 100, y: 200 },
+      hole: { x: 1850, y: 200, radius: 18 },
+      walls: [],
+      sandTraps: [],
+      waterHazards: [],
+      accents: [],
+      speedBoosts: []
+    },
+    {
+      id: "test-course-1",
+      name: "Test Course 1",
+      description: "Tall course.",
+      width: 450,
+      height: 1080,
+      tee: { x: 230, y: 990 },
+      hole: { x: 230, y: 150, radius: 18 },
+      walls: [],
+      sandTraps: [],
+      waterHazards: [],
+      accents: [],
+      speedBoosts: []
+    },
+    {
       id: "sandy-isle",
       name: "Sandy Isle",
       description: "Course featuring many places to get stuck in sand.",

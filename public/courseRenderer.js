@@ -122,7 +122,7 @@ export class CourseRenderer {
     });
   }
 
-  resize(course) {
+  resize(course, zoom = 1) {
     const frame = this.canvas.parentElement;
     const availableWidth = Math.floor(frame.clientWidth);
     const availableHeight = Math.floor(frame.clientHeight || course.height);
@@ -132,7 +132,8 @@ export class CourseRenderer {
     }
 
     this.devicePixelRatio = window.devicePixelRatio || 1;
-    const scale = Math.min(1, Math.max(availableWidth / course.width, availableHeight / course.height));
+    const fitScale = Math.min(1, Math.max(availableWidth / course.width, availableHeight / course.height));
+    const scale = fitScale * Math.max(0.1, Number(zoom) || 1);
     const displayWidth = Math.max(1, Math.round(course.width * scale));
     const displayHeight = Math.max(1, Math.round(course.height * scale));
 
@@ -164,11 +165,11 @@ export class CourseRenderer {
     }
 
     const behavior = smooth ? "smooth" : "auto";
-    const targetLeft = point.x * this.worldScale - frame.clientWidth / 2;
-    const targetTop = point.y * this.worldScale - frame.clientHeight / 2;
+    const targetLeft = this.canvas.offsetLeft + point.x * this.worldScale - frame.clientWidth / 2;
+    const targetTop = this.canvas.offsetTop + point.y * this.worldScale - frame.clientHeight / 2;
     frame.scrollTo({
-      left: Math.max(targetLeft, 0),
-      top: Math.max(targetTop, 0),
+      left: clamp(targetLeft, 0, Math.max(0, frame.scrollWidth - frame.clientWidth)),
+      top: clamp(targetTop, 0, Math.max(0, frame.scrollHeight - frame.clientHeight)),
       behavior
     });
   }
@@ -363,7 +364,7 @@ export class CourseRenderer {
   }
 
   render(scene, now) {
-    if (!scene?.course || !this.resize(scene.course)) {
+    if (!scene?.course || !this.resize(scene.course, scene.zoom)) {
       return;
     }
 

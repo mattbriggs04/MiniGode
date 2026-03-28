@@ -170,10 +170,13 @@ test("multi-course progression stays viewer-specific after the host clears cours
     await expect(hostPage.locator("#golf-screen")).toBeVisible();
     await expect(hostPage.locator("#course-name")).toContainText(firstCourse.name);
     await expect(hostPage.locator("#course-name")).toContainText("Course 1/2");
-    await expect(hostPage.locator("#golf-controls-panel")).toContainText("Drag back from the ball");
 
     await playCourseSinkPlan(hostPage, firstCourse.id);
 
+    await expect(hostPage.locator("#course-name")).toContainText(firstCourse.name);
+    await expect(hostPage.locator("#golf-controls-panel")).toContainText("Viewing course 1/2");
+    await expect(hostPage.locator("#golf-controls-panel")).toContainText("Active course 2/2");
+    await hostPage.locator("#course-next-btn").click();
     await expect(hostPage.locator("#course-name")).toContainText(secondCourse.name);
     await expect(hostPage.locator("#course-name")).toContainText("Course 2/2");
     await expect(hostPage.locator("#golf-controls-panel")).toContainText("Viewing course 2/2");
@@ -183,6 +186,9 @@ test("multi-course progression stays viewer-specific after the host clears cours
     await expect(guestPage.locator("#course-name")).toContainText(firstCourse.name);
     await expect(guestPage.locator("#course-name")).toContainText("Course 1/2");
     await expect(guestPage.locator("#golf-controls-panel")).toContainText("Viewing course 1/2");
+    await guestPage.locator("#course-next-btn").click();
+    await expect(guestPage.locator("#course-name")).toContainText(secondCourse.name);
+    await expect(guestPage.locator("#course-name")).toContainText("Course 2/2");
   } finally {
     await Promise.all([hostContext.close(), guestContext.close()]);
   }

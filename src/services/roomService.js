@@ -37,6 +37,7 @@ const PLAYER_COLORS = ["#ff7a59", "#4db6ac", "#ffd166", "#118ab2", "#ef476f", "#
 const WIN_REASON_LABELS = {
   finished_first: "finished first",
   lowest_total_strokes: "lowest total strokes",
+  fastest_round_time_tiebreak: "fastest round time tiebreak",
   solved_question_tiebreak: "solved-question tiebreak",
   furthest_course: "furthest course reached",
   closest_to_hole: "closest to the hole",
@@ -676,12 +677,30 @@ function getSolvedCountsByDifficulty(player) {
   }, createDifficultyLookup(() => 0));
 }
 
+function getPlayerRoundStartedAt(room, player) {
+  return player.courseStates[0]?.unlockedAt ?? room.startedAt ?? player.joinedAt;
+}
+
+function getPlayerRoundElapsedMs(room, player, finishedAt = player.finishedAt) {
+  if (finishedAt === null || finishedAt === undefined) {
+    return null;
+  }
+
+  const startedAt = getPlayerRoundStartedAt(room, player);
+  if (startedAt === null || startedAt === undefined) {
+    return null;
+  }
+
+  return Math.max(0, finishedAt - startedAt);
+}
+
 function getPlayerStandingMetrics(room, player) {
   const activeCourseIndex = getPlayerCurrentCourseIndex(room, player);
   const activeCourse = getPlayerCurrentCourse(room, player);
   const activeCourseState = getPlayerCurrentCourseState(room, player);
   const solvedCountsByDifficulty = getSolvedCountsByDifficulty(player);
   const roundComplete = hasPlayerCompletedRound(room, player);
+  const roundStartedAt = getPlayerRoundStartedAt(room, player);
 
   return {
     holesCompleted: player.holesCompleted,
@@ -690,6 +709,8 @@ function getPlayerStandingMetrics(room, player) {
     activeCourseNumber: activeCourseIndex + 1,
     activeCourseId: room.courseIds[activeCourseIndex],
     activeCourseUnlockedAt: activeCourseState.unlockedAt ?? player.joinedAt,
+    roundStartedAt,
+    roundElapsedMs: getPlayerRoundElapsedMs(room, player),
     roundComplete,
     finishPlace: player.finishPlace,
     finishedAt: player.finishedAt,
@@ -717,35 +738,27 @@ function compareRaceLeaderMetrics(left, right) {
 
 function compareCompletedRoundMetrics(left, right, room) {
   if (room.courseIds.length === 1) {
-    if (left.finishedAt !== right.finishedAt) {
-      return left.finishedAt - right.finishedAt;
+    if (left.roundElapsedMs !== right.roundElapsedMs) {
+      return left.roundElapsedMs - right.roundElapsedMs;
     }
 
     return 0;
-  }
-
-  if (room.status === "finished") {
-    if (left.strokes !== right.strokes) {
-      return left.strokes - right.strokes;
-    }
-
-    if (left.solvedCount !== right.solvedCount) {
-      return right.solvedCount - left.solvedCount;
-    }
-
-    return 0;
-  }
-
-  if (left.finishedAt !== right.finishedAt) {
-    return left.finishedAt - right.finishedAt;
   }
 
   if (left.strokes !== right.strokes) {
     return left.strokes - right.strokes;
   }
 
+  if (left.roundElapsedMs !== right.roundElapsedMs) {
+    return left.roundElapsedMs - right.roundElapsedMs;
+  }
+
   if (left.solvedCount !== right.solvedCount) {
     return right.solvedCount - left.solvedCount;
+  }
+
+  if (left.finishedAt !== right.finishedAt) {
+    return left.finishedAt - right.finishedAt;
   }
 
   return 0;
@@ -865,6 +878,10 @@ function getWinnerReasonId(room, leaderboardEntries) {
       return "lowest_total_strokes";
     }
 
+    if (winner.roundElapsedMs !== runnerUp.roundElapsedMs) {
+      return "fastest_round_time_tiebreak";
+    }
+
     if (winner.solvedCount !== runnerUp.solvedCount) {
       return "solved_question_tiebreak";
     }
@@ -886,6 +903,10 @@ function getWinnerReasonId(room, leaderboardEntries) {
 
   if (winner.strokes !== runnerUp.strokes) {
     return "lowest_total_strokes";
+  }
+
+  if (winner.roundComplete && runnerUp.roundComplete && winner.roundElapsedMs !== runnerUp.roundElapsedMs) {
+    return "fastest_round_time_tiebreak";
   }
 
   if (winner.solvedCount !== runnerUp.solvedCount) {
@@ -944,6 +965,7 @@ function serializePlayer(room, player, metrics = null) {
     holesTotal: room.courseIds.length,
     distanceToHole: resolvedMetrics.distanceToHole,
     progressPercent: resolvedMetrics.progressPercent,
+    roundElapsedMs: resolvedMetrics.roundElapsedMs,
     leaderboardRank: resolvedMetrics.leaderboardRank ?? null
   };
 }

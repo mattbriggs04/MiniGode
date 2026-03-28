@@ -268,6 +268,28 @@ function getActiveGolfPlayers() {
     .filter(Boolean);
 }
 
+function getPreferredCourseFocusPoint(course) {
+  const activePlayer = getActiveGolfPlayer();
+  if (activePlayer?.ball) {
+    return activePlayer.ball;
+  }
+
+  const players = getActiveGolfPlayers();
+  if (players.length) {
+    const myVisibleBall = players.find((player) => player.id === state.me?.id)?.ball;
+    return myVisibleBall ?? players[0].ball;
+  }
+
+  if (!course) {
+    return null;
+  }
+
+  return {
+    x: course.width / 2,
+    y: course.height / 2
+  };
+}
+
 function getCatalogCourseById(courseId) {
   return state.courseCatalog.find((course) => course.id === courseId) ?? null;
 }
@@ -545,6 +567,23 @@ function formatCountdownClock(milliseconds) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatElapsedClock(milliseconds) {
+  if (milliseconds === null || milliseconds === undefined) {
+    return "In progress";
+  }
+
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 function isRoomOver(status = state.room?.status) {
   return status === "finished" || status === "ended" || status === "timed_out";
 }
@@ -575,10 +614,12 @@ function updateLiveTimerLabels() {
     node.textContent = timerText;
   });
 
-  const closeText = state.room?.expiresAt ? formatCountdownClock(getLiveRoomExpiryMs() ?? 0) : "";
-  document.querySelectorAll("[data-room-close-countdown]").forEach((node) => {
-    node.textContent = closeText;
-  });
+  const closeText = state.room?.expiresAt ? formatCountdownClock(getLiveRoomExpiryMs() ?? 0) : null;
+  if (closeText !== null) {
+    document.querySelectorAll("[data-room-close-countdown]").forEach((node) => {
+      node.textContent = closeText;
+    });
+  }
 }
 
 window.setInterval(() => {
@@ -890,7 +931,6 @@ function createShell() {
                     <div>
                       <p class="panel-kicker">Golf course</p>
                       <h3 id="course-name"></h3>
-                      <p class="muted">Drag backward from the ball to aim and set power. Each shot costs one swing credit.</p>
                     </div>
                     <div class="course-viewport-tools" aria-label="Course zoom controls">
                       <p class="panel-kicker">Zoom</p>
@@ -904,7 +944,9 @@ function createShell() {
                   </div>
 
                   <div class="golf-canvas-shell">
-                    <canvas id="course-canvas" aria-label="Mini golf course"></canvas>
+                    <div id="course-canvas-stage" class="golf-canvas-stage">
+                      <canvas id="course-canvas" aria-label="Mini golf course"></canvas>
+                    </div>
                   </div>
                 </section>
 
@@ -920,6 +962,8 @@ function createShell() {
 
         <aside id="chat-dock" class="chat-dock" hidden>
           <div class="chat-hotbar">
+            <div id="room-timer-pill" class="chat-toggle game-timer-pill" hidden></div>
+            <button id="leaderboard-toggle-btn" type="button" class="chat-toggle" hidden>Leaderboard</button>
             <button id="chat-toggle-btn" type="button" class="chat-toggle">Chat</button>
           </div>
 
@@ -1035,6 +1079,9 @@ function createShell() {
     courseCanvas: document.getElementById("course-canvas"),
     golfControlsPanel: document.getElementById("golf-controls-panel"),
     chatDock: document.getElementById("chat-dock"),
+    chatHotbar: root.querySelector(".chat-hotbar"),
+    roomTimerPill: document.getElementById("room-timer-pill"),
+    leaderboardToggleButton: document.getElementById("leaderboard-toggle-btn"),
     chatToggleButton: document.getElementById("chat-toggle-btn"),
     chatPanel: document.getElementById("chat-panel"),
     chatCloseButton: document.getElementById("chat-close-btn"),
@@ -1053,6 +1100,8 @@ function createShell() {
     (theme) => `<option value="${theme.id}">${theme.label}</option>`
   ).join("");
   elements.editorThemeSelect.value = state.editorTheme;
+  elements.themeToggleButton.classList.add("page-theme-toggle--docked");
+  elements.chatHotbar.prepend(elements.themeToggleButton);
 
   renderer = new CourseRenderer(elements.courseCanvas);
   applyColorMode();
@@ -1084,6 +1133,7 @@ function createShell() {
   elements.courseCanvas.addEventListener("pointerup", onCoursePointerUp);
   elements.courseCanvas.addEventListener("pointercancel", onCoursePointerCancel);
   elements.themeToggleButton.addEventListener("click", onToggleColorMode);
+  elements.leaderboardToggleButton.addEventListener("click", () => setGameScreen("leaderboard"));
   elements.chatToggleButton.addEventListener("click", () => setChatOpen(true));
   elements.chatCloseButton.addEventListener("click", () => setChatOpen(false));
   elements.chatEndButton.addEventListener("click", onVoteToEndGame);
@@ -1309,8 +1359,6 @@ function applyRoomState(payload) {
   const previousRoom = state.room;
   const previousMe = state.me;
   const previousViewedCourseIndex = state.viewedCourseIndex ?? 0;
-  const wasFollowingCurrentCourse =
-    previousMe && previousRoom ? previousViewedCourseIndex === (previousMe.currentCourseIndex ?? previousRoom.currentCourseIndex ?? 0) : true;
 
   state.practiceSession = null;
   state.room = payload.room;
@@ -1318,11 +1366,11 @@ function applyRoomState(payload) {
   state.dragAim = null;
 
   if (payload.room?.courseIds?.length && payload.me) {
-    const maxUnlockedCourseIndex = payload.me.currentCourseIndex ?? 0;
-    if (wasFollowingCurrentCourse || previousMe?.currentCourseIndex === undefined) {
-      state.viewedCourseIndex = maxUnlockedCourseIndex;
+    const maxCourseIndex = payload.room.courseIds.length - 1;
+    if (!previousRoom || previousRoom.code !== payload.room.code || previousMe?.currentCourseIndex === undefined) {
+      state.viewedCourseIndex = clamp(payload.me.currentCourseIndex ?? 0, 0, maxCourseIndex);
     } else {
-      state.viewedCourseIndex = clamp(previousViewedCourseIndex, 0, maxUnlockedCourseIndex);
+      state.viewedCourseIndex = clamp(previousViewedCourseIndex, 0, maxCourseIndex);
     }
   } else {
     state.viewedCourseIndex = 0;
@@ -1332,13 +1380,16 @@ function applyRoomState(payload) {
     previousViewedCourseIndex !== state.viewedCourseIndex ||
     previousMe?.currentCourseIndex !== payload.me?.currentCourseIndex;
 
-  if (payload.room?.status === "active" && !payload.me?.currentQuestion) {
+  if (payload.room?.status === "active" && !payload.me?.currentQuestion && state.gameScreen !== "leaderboard") {
     state.gameScreen = "golf";
   }
 
   if (isRoomOver(payload.room?.status)) {
     state.chatOpen = false;
     state.leaderboardModalOpen = false;
+    if (!previousRoom || previousRoom.code !== payload.room.code || state.gameScreen === "challenge") {
+      state.gameScreen = "leaderboard";
+    }
   }
   syncQuestionDraft();
   renderViews();
@@ -1355,19 +1406,19 @@ function getCurrentStage() {
     return "home";
   }
 
-  if (isRoomOver(state.room.status)) {
-    return "results";
-  }
-
   if (state.room.status === "waiting") {
     return "waiting";
+  }
+
+  if (state.gameScreen === "leaderboard") {
+    return "leaderboard";
   }
 
   return state.gameScreen === "golf" ? "golf" : "challenge";
 }
 
 function syncShellPresentation(stage) {
-  const gameplay = stage === "challenge" || stage === "golf" || stage === "results";
+  const gameplay = stage === "challenge" || stage === "golf" || stage === "leaderboard";
   elements.appShell.classList.toggle("is-gameplay", gameplay);
   elements.hero.hidden = gameplay;
   document.body.classList.toggle("gameplay-mode", gameplay);
@@ -1386,7 +1437,7 @@ function setViewedCourseIndex(courseIndex) {
     return;
   }
 
-  state.viewedCourseIndex = clamp(courseIndex, 0, state.me.currentCourseIndex ?? 0);
+  state.viewedCourseIndex = clamp(courseIndex, 0, state.room.courseIds.length - 1);
   state.pendingCourseCenter = true;
   if (getCurrentStage() === "golf") {
     renderGame();
@@ -1684,71 +1735,26 @@ function renderGameTimerHud() {
   const visible = Boolean(
     state.room?.timer?.enabled &&
       state.room.status === "active" &&
-      (getCurrentStage() === "challenge" || getCurrentStage() === "golf")
+      (getCurrentStage() === "challenge" || getCurrentStage() === "golf" || getCurrentStage() === "leaderboard")
   );
 
-  elements.gameTimerHud.hidden = !visible;
+  elements.roomTimerPill.hidden = !visible;
   if (!visible) {
-    elements.gameTimerHud.innerHTML = "";
+    elements.roomTimerPill.innerHTML = "";
     return;
   }
 
-  elements.gameTimerHud.innerHTML = `
-    <section class="game-timer-pill" aria-live="polite">
+  elements.roomTimerPill.innerHTML = `
+    <section aria-live="polite">
       <strong data-room-countdown>${escapeHtml(formatCountdownClock(getLiveRoomTimerMs() ?? 0))}</strong>
     </section>
   `;
 }
 
 function renderRaceBanner() {
-  const visible = Boolean(
-    state.room &&
-      state.me &&
-      state.room.status === "active" &&
-      (getCurrentStage() === "challenge" || getCurrentStage() === "golf")
-  );
-
-  elements.gameBanner.hidden = !visible;
-  if (!visible) {
-    elements.gameBanner.textContent = "";
-    state.lastRaceLeaderSignature = null;
-    clearTimeout(raceBannerAnimationTimer);
-    return;
-  }
-
-  const leaders = getRaceLeadingPlayers();
-  const everyoneTied = leaders.length === state.room.players.length;
-  const leader = leaders.length === 1 ? leaders[0] : null;
-  const title = everyoneTied
-    ? "Everyone is tied."
-    : leader
-      ? `${leader.name} leads the race.`
-      : `${formatLeaderNames(leaders)} are tied for the lead.`;
-  const body = everyoneTied
-    ? `No one has broken away yet. Furthest course wins; on the same course, the closest ball leads.`
-    : leader
-      ? `Course ${leader.currentCourseNumber}/${leader.holesTotal} • ${leader.distanceToHole} from the hole`
-      : `They are level on the same race position right now.`;
-  const signature = everyoneTied
-    ? `all:${state.room.players.length}`
-    : leaders.map((player) => player.id).sort().join(",");
-
-  elements.gameBanner.innerHTML = `
-    <strong>${escapeHtml(title)}</strong>
-    <span>${escapeHtml(body)}</span>
-  `;
-
-  if (state.lastRaceLeaderSignature && state.lastRaceLeaderSignature !== signature) {
-    elements.gameBanner.classList.remove("winner-banner--pulse");
-    void elements.gameBanner.offsetWidth;
-    elements.gameBanner.classList.add("winner-banner--pulse");
-    clearTimeout(raceBannerAnimationTimer);
-    raceBannerAnimationTimer = window.setTimeout(() => {
-      elements.gameBanner.classList.remove("winner-banner--pulse");
-    }, 700);
-  }
-
-  state.lastRaceLeaderSignature = signature;
+  elements.gameBanner.hidden = true;
+  elements.gameBanner.textContent = "";
+  state.lastRaceLeaderSignature = null;
 }
 
 function setChatOpen(nextOpen) {
@@ -1792,16 +1798,21 @@ function chatMessageMarkup(message) {
 }
 
 function renderChatDock() {
-  const inRoom = Boolean(state.room && state.me && !isRoomOver());
-  elements.themeToggleButton.classList.toggle("page-theme-toggle--chat-offset", inRoom);
-  elements.chatDock.hidden = !inRoom;
+  const hasRoom = Boolean(state.room && state.me);
+  const chatAvailable = Boolean(hasRoom && !isPracticeMode() && !isRoomOver());
+  const leaderboardAvailable = Boolean(hasRoom && !isPracticeMode() && state.room.status !== "waiting");
 
-  if (!inRoom) {
+  elements.chatDock.hidden = false;
+  elements.leaderboardToggleButton.hidden = !leaderboardAvailable;
+  elements.leaderboardToggleButton.disabled = getCurrentStage() === "leaderboard";
+  elements.chatToggleButton.hidden = !chatAvailable || state.chatOpen;
+  elements.chatPanel.hidden = !chatAvailable || !state.chatOpen;
+
+  if (!chatAvailable) {
+    state.chatOpen = false;
     return;
   }
 
-  elements.chatToggleButton.hidden = state.chatOpen;
-  elements.chatPanel.hidden = !state.chatOpen;
   elements.chatEndButton.textContent = getEndVoteButtonLabel();
   elements.chatEndButton.disabled = state.busy || state.chatBusy || isRoomOver();
   elements.chatNotice.hidden = !state.chatNotice;
@@ -1828,6 +1839,9 @@ function leaderboardDetailRowMarkup(player, index) {
   const difficultySummary = state.bootstrap.difficulties
     .map((difficulty) => `${formatDifficulty(difficulty)} ${solvedCounts[difficulty] ?? 0}`)
     .join(" • ");
+  const roundTime = player.roundElapsedMs !== null && player.roundElapsedMs !== undefined
+    ? formatElapsedClock(player.roundElapsedMs)
+    : "In progress";
 
   return `
     <article class="leaderboard-detail-row ${player.id === state.me.id ? "is-me" : ""}">
@@ -1862,6 +1876,10 @@ function leaderboardDetailRowMarkup(player, index) {
         <div class="results-stat">
           <span>Courses</span>
           <strong>${player.holesCompleted}/${player.holesTotal}</strong>
+        </div>
+        <div class="results-stat">
+          <span>Round Time</span>
+          <strong>${escapeHtml(roundTime)}</strong>
         </div>
       </div>
     </article>
@@ -2061,9 +2079,9 @@ function standingsPanelMarkup() {
 function getResultsSummary() {
   if (!state.room || !state.me) {
     return {
-      eyebrow: "Results",
-      title: "Round complete.",
-      body: "Final standings are available below."
+      eyebrow: "Leaderboard",
+      title: "Standings unavailable.",
+      body: "Room standings will appear here."
     };
   }
 
@@ -2071,6 +2089,23 @@ function getResultsSummary() {
   const leader = leaders.length === 1 ? leaders[0] : null;
   const leaderNames = formatLeaderNames(leaders);
   const winnerReason = state.room.winnerReason ? ` Win condition: ${state.room.winnerReason}.` : "";
+  const rankingRuleText = "Players are ranked by courses completed first, then current-course progress, total strokes, round time, and solved questions.";
+
+  if (state.room.status === "active") {
+    if (!leader) {
+      return {
+        eyebrow: "Leaderboard",
+        title: "Live standings are tied.",
+        body: rankingRuleText
+      };
+    }
+
+    return {
+      eyebrow: "Leaderboard",
+      title: leader.id === state.me.id ? "You currently lead the room." : `${leader.name} currently leads the room.`,
+      body: rankingRuleText
+    };
+  }
 
   if (state.room.status === "timed_out") {
     if (!leader) {
@@ -2090,7 +2125,7 @@ function getResultsSummary() {
         leader?.id === state.me.id
           ? "Time is up. You lead the final leaderboard."
           : `Time is up. ${leader?.name ?? "The room leader"} finished on top.`,
-      body: `Players are ranked by courses completed first, then current-course progress, then total strokes and solved questions.${winnerReason}`
+      body: `${rankingRuleText}${winnerReason}`
     };
   }
 
@@ -2154,6 +2189,9 @@ function resultsRowMarkup(player, index) {
 
   const distanceLabel = roundComplete ? "All courses cleared" : player.ball.sunk ? "In the cup" : `${player.distanceToHole} left`;
   const resultsPill = isTiedForLead(player) ? "Tied lead" : roundComplete ? "Completed" : "In progress";
+  const roundTime = player.roundElapsedMs !== null && player.roundElapsedMs !== undefined
+    ? formatElapsedClock(player.roundElapsedMs)
+    : "In progress";
 
   return `
     <article class="results-row ${player.id === state.me.id ? "is-me" : ""} ${player.ball.sunk ? "is-finished" : ""}">
@@ -2189,6 +2227,10 @@ function resultsRowMarkup(player, index) {
           <span>Status</span>
           <strong>${escapeHtml(distanceLabel)}</strong>
         </div>
+        <div class="results-stat">
+          <span>Round Time</span>
+          <strong>${escapeHtml(roundTime)}</strong>
+        </div>
       </div>
     </article>
   `;
@@ -2198,6 +2240,15 @@ function renderResultsScreen() {
   const summary = getResultsSummary();
   const timerLabel = formatTimeLimitLabel(state.room.timer?.timeLimitMinutes);
   const closeCountdown = state.room.expiresAt ? formatCountdownClock(getLiveRoomExpiryMs() ?? 0) : null;
+  const liveRoom = state.room.status === "active";
+  const closeLabel = liveRoom ? "Room status" : "Room closes in";
+  const closeValue = liveRoom ? "Live" : closeCountdown ?? "Closing soon";
+  const leaderboardTitle = liveRoom ? "Live standings" : "Final standings";
+  const leaderboardRows = liveRoom
+    ? state.room.players.map(leaderboardDetailRowMarkup).join("")
+    : state.room.players.map(resultsRowMarkup).join("");
+  const showBackToCourse = Boolean(state.room?.status !== "waiting");
+  const showBackToProblem = Boolean(state.me?.currentQuestion && state.room?.status === "active");
 
   elements.resultsPanel.innerHTML = `
     <section class="panel results-panel__shell">
@@ -2216,27 +2267,31 @@ function renderResultsScreen() {
         <div class="setting-row"><span>Question bank</span><strong>${formatQuestionSource(state.room.questionSource)}</strong></div>
         <div class="setting-row"><span>Time limit</span><strong>${escapeHtml(timerLabel)}</strong></div>
         <div class="setting-row"><span>Room code</span><strong>${escapeHtml(state.room.code)}</strong></div>
-        <div class="setting-row"><span>Room closes in</span><strong data-room-close-countdown>${escapeHtml(closeCountdown ?? "Closing soon")}</strong></div>
+        <div class="setting-row"><span>${escapeHtml(closeLabel)}</span><strong data-room-close-countdown>${escapeHtml(closeValue)}</strong></div>
       </div>
 
       <section class="results-leaderboard">
         <div class="results-leaderboard__header">
           <div>
             <p class="panel-kicker">Leaderboard</p>
-            <h3>Final standings</h3>
+            <h3>${escapeHtml(leaderboardTitle)}</h3>
           </div>
         </div>
         <div class="results-list">
-          ${state.room.players.map(resultsRowMarkup).join("")}
+          ${leaderboardRows}
         </div>
       </section>
 
       <div class="results-actions">
+        <button id="leaderboard-back-course-btn" type="button" class="secondary"${showBackToCourse ? "" : " hidden"}>Back to course</button>
+        <button id="leaderboard-back-problem-btn" type="button" class="secondary"${showBackToProblem ? "" : " hidden"}>Back to problem</button>
         <button id="results-leave-btn" type="button" class="secondary">Leave room</button>
       </div>
     </section>
   `;
 
+  document.getElementById("leaderboard-back-course-btn")?.addEventListener("click", () => setGameScreen("golf"));
+  document.getElementById("leaderboard-back-problem-btn")?.addEventListener("click", () => setGameScreen("challenge"));
   document.getElementById("results-leave-btn")?.addEventListener("click", () => leaveRoom());
   updateLiveTimerLabels();
 }
@@ -2645,56 +2700,31 @@ function renderGolfControls() {
 
   const viewedCourseIndex = getViewedCourseIndex();
   const canStepBackward = viewedCourseIndex > 0;
-  const canStepForward = viewedCourseIndex < (state.me.currentCourseIndex ?? 0);
+  const canStepForward = viewedCourseIndex < ((state.room?.totalCourses ?? 1) - 1);
   const viewOnlyMode = !isViewingCurrentCourse() || Boolean(state.me.finishPlace);
   const spectatorMode = viewOnlyMode || isRoomOver();
-  const statusCard = courseStatusCardMarkup();
-  const standingsCard = standingsPanelMarkup();
-  const viewModeCard = spectatorMode
-    ? `
-        <section class="spectator-card">
-          <p class="panel-kicker">${isRoomOver() ? "Round Review" : "View Only"}</p>
-          <h3>${
-            isRoomOver()
-              ? "Final round results"
-              : state.me.finishPlace
-                ? "Your round is complete"
-                : "Browsing an unlocked course"
-          }</h3>
-          <p>${
-            isRoomOver()
-              ? "Swing controls are disabled because the round is over."
-              : state.me.finishPlace
-                ? "You can keep following the room from any unlocked course while the rest of the players finish."
-                : "You can look backward through unlocked courses, but swings only work on your current playable course."
-          }</p>
-        </section>
-      `
-    : `
-        <section class="aim-note-card">
-          <p class="panel-kicker">Aiming</p>
-          <h3>Drag back from the ball</h3>
-          <p>Drag on the course to set direction and power, then release and click Take swing.</p>
-        </section>
-      `;
+  const controlNote = spectatorMode
+    ? isRoomOver()
+      ? "The round is over. You can keep browsing every course and open the leaderboard whenever you want."
+      : state.me.finishPlace
+        ? "Your round is complete. You can keep following every course while the rest of the room finishes."
+        : "You are browsing a different course. Swing controls only work on your current playable course."
+    : "Drag on the course to aim, then release and click Take swing.";
 
   elements.golfControlsPanel.innerHTML = `
     <p class="panel-kicker">Shot controls</p>
-    <h2>Take your swing</h2>
+    <h2>${escapeHtml(spectatorMode ? "Course view" : "Take your swing")}</h2>
     <div class="shot-summary">
       <span>${formatCredits(state.me.swingCredits)}</span>
       <span>Viewing course ${viewedCourseIndex + 1}/${state.room.totalCourses} • Active course ${state.me.currentCourseNumber}/${state.room.totalCourses}</span>
     </div>
 
-    ${statusCard}
-    ${viewModeCard}
+    <p class="muted">${escapeHtml(controlNote)}</p>
 
     <div class="course-nav-actions">
       <button id="course-prev-btn" type="button" class="secondary"${canStepBackward ? "" : " disabled"}>Prev course</button>
       <button id="course-next-btn" type="button" class="secondary"${canStepForward ? "" : " disabled"}>Next course</button>
     </div>
-
-    ${standingsCard}
 
     <button id="swing-btn" type="button" class="primary">Take swing</button>
     <button id="golf-to-problem-btn" type="button" class="course-switch-button"${state.me.currentQuestion ? "" : " hidden"}>Back to problem</button>
@@ -2714,13 +2744,13 @@ function renderGolfControls() {
   document.getElementById("course-prev-btn")?.addEventListener("click", () => setViewedCourseIndex(viewedCourseIndex - 1));
   document.getElementById("course-next-btn")?.addEventListener("click", () => setViewedCourseIndex(viewedCourseIndex + 1));
   document.getElementById("golf-to-problem-btn")?.addEventListener("click", () => setGameScreen("challenge"));
-  bindLeaderboardTriggers();
 }
 
 function drawCourse() {
   const course = getActiveGolfCourse();
   const player = getActiveGolfPlayer();
-  if (!course || !player || state.gameScreen !== "golf") {
+  const players = getActiveGolfPlayers();
+  if (!course || state.gameScreen !== "golf") {
     return;
   }
 
@@ -2733,10 +2763,11 @@ function drawCourse() {
   renderer.render({
     course,
     zoom: state.courseZoom,
-    players: getActiveGolfPlayers(),
-    meId: state.me?.id ?? player.id,
+    players,
+    meId: state.me?.id ?? player?.id ?? null,
     mePlayer: player,
     preview:
+      player &&
       canTakeSwing() &&
       !player.ball.sunk &&
       !state.swingAnimating
@@ -2747,7 +2778,8 @@ function drawCourse() {
 
   if (state.pendingCourseCenter) {
     state.pendingCourseCenter = false;
-    requestAnimationFrame(() => renderer.centerOnPoint(player.ball));
+    const focusPoint = getPreferredCourseFocusPoint(course);
+    requestAnimationFrame(() => renderer.centerOnPoint(focusPoint));
   }
 }
 
@@ -2779,10 +2811,12 @@ function maybeReplayRecentSwing() {
 }
 
 function renderGame() {
-  const showingGolf = state.gameScreen === "golf";
-  elements.challengeScreen.hidden = showingGolf;
+  const activeScreen = state.gameScreen === "leaderboard" ? "leaderboard" : state.gameScreen === "golf" ? "golf" : "challenge";
+  const showingGolf = activeScreen === "golf";
+  const showingLeaderboard = activeScreen === "leaderboard";
+  elements.challengeScreen.hidden = activeScreen !== "challenge";
   elements.golfScreen.hidden = !showingGolf;
-  elements.resultsScreen.hidden = true;
+  elements.resultsScreen.hidden = !showingLeaderboard;
   renderCourseZoomControls();
 
   if (showingGolf) {
@@ -2791,6 +2825,8 @@ function renderGame() {
       ? `${getActiveGolfCourse()?.name ?? ""} • Course ${getViewedCourseIndex() + 1}/${state.room.totalCourses}`
       : getActiveGolfCourse()?.name ?? "";
     requestAnimationFrame(() => drawCourse());
+  } else if (showingLeaderboard) {
+    renderResultsScreen();
   } else {
     renderProblemPanel();
     renderEditor();
@@ -2813,7 +2849,7 @@ function renderViews() {
   elements.gameShell.hidden = stage === "home" || stage === "waiting";
   elements.challengeScreen.hidden = stage !== "challenge";
   elements.golfScreen.hidden = stage !== "golf";
-  elements.resultsScreen.hidden = stage !== "results";
+  elements.resultsScreen.hidden = stage !== "leaderboard";
   renderChatDock();
   renderGameTimerHud();
   renderLeaderboardModal();
@@ -2826,12 +2862,6 @@ function renderViews() {
 
   if (stage === "waiting") {
     renderWaitingRoom();
-    renderRaceBanner();
-    return;
-  }
-
-  if (stage === "results") {
-    renderResultsScreen();
     renderRaceBanner();
     return;
   }

@@ -655,6 +655,49 @@ test("ended games expose the solved-question tiebreak winner reason when standin
   assert.equal(ended.state.room.winnerReason, "solved-question tiebreak");
 });
 
+test("finished multi-course rounds break stroke ties with elapsed round time before solved questions", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+
+  const [firstCourseId, secondCourseId] = requireCourseIds(2);
+  const created = createTestRoom({
+    name: "dev$mode!",
+    courseIds: [firstCourseId, secondCourseId]
+  });
+  const joined = joinRoom({
+    roomCode: created.roomCode,
+    name: "Guest"
+  });
+
+  startTestRoom(created);
+  const totalSwingCount = getCourseSinkPlan(firstCourseId).length + getCourseSinkPlan(secondCourseId).length;
+  earnSwingCredits(getSession(joined), totalSwingCount);
+
+  const hostFinished = finishRound(getSession(created));
+  assert.equal(hostFinished.state.room.status, "active");
+
+  t.mock.timers.tick(15_000);
+
+  const guestFinished = finishRound(getSession(joined));
+
+  assert.equal(guestFinished.state.room.status, "finished");
+  assert.equal(guestFinished.state.room.winnerId, created.playerId);
+  assert.equal(guestFinished.state.room.winnerReason, "fastest round time tiebreak");
+  assert.deepEqual(
+    guestFinished.state.room.players.map((player) => player.id),
+    [created.playerId, joined.playerId]
+  );
+  assert.deepEqual(
+    guestFinished.state.room.players.map((player) => player.leaderboardRank),
+    [1, 2]
+  );
+  assert.deepEqual(
+    guestFinished.state.room.players.map((player) => player.strokes),
+    [totalSwingCount, totalSwingCount]
+  );
+  assert.ok(guestFinished.state.room.players[0].roundElapsedMs < guestFinished.state.room.players[1].roundElapsedMs);
+  assert.ok(guestFinished.state.room.players[0].solvedCount < guestFinished.state.room.players[1].solvedCount);
+});
+
 test("timed rooms expose timer metadata and transition to timed_out when the deadline passes", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 

@@ -288,6 +288,13 @@ textarea:focus-visible {
   bottom: 96px;
 }
 
+.page-theme-toggle.page-theme-toggle--docked {
+  position: static;
+  right: auto;
+  bottom: auto;
+  margin: 0;
+}
+
 .page-theme-toggle:hover {
   transform: translateY(-1px);
 }
@@ -794,22 +801,17 @@ a.ghost-inline {
 }
 
 .game-timer-pill {
-  padding: 0;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  backdrop-filter: none;
-  color: var(--timer-pill-text);
-  opacity: 0.72;
+  cursor: default;
+  pointer-events: none;
 }
 
 .game-timer-pill strong {
   display: block;
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  color: var(--timer-pill-text);
 }
 
 .results-screen {
@@ -1335,7 +1337,7 @@ body.theme-dark .standing-rank {
 
 .results-row__stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -1361,6 +1363,8 @@ body.theme-dark .standing-rank {
 .results-actions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .results-actions .secondary {
@@ -1683,6 +1687,8 @@ body.is-resizing-panels * {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .chat-toggle {
@@ -1892,7 +1898,7 @@ body.is-resizing-panels * {
 
 .leaderboard-detail-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -1957,8 +1963,7 @@ body.is-resizing-panels * {
 .golf-canvas-shell {
   flex: 1 1 auto;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  display: block;
   width: 100%;
   padding: 16px;
   overflow: auto;
@@ -1970,11 +1975,18 @@ body.is-resizing-panels * {
   box-shadow: var(--course-frame-shadow);
 }
 
+.golf-canvas-stage {
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+
 #course-canvas {
   display: block;
   max-width: none;
   height: auto;
-  margin: 0 auto;
+  margin: 0;
   border-radius: 18px;
   background: #173021;
   cursor: grab;
@@ -2138,6 +2150,12 @@ body.theme-dark .aim-note-card {
     bottom: 74px;
   }
 
+  .page-theme-toggle.page-theme-toggle--docked {
+    position: static;
+    right: auto;
+    bottom: auto;
+  }
+
   .app-shell {
     width: min(100vw - 20px, 1460px);
     padding-top: 18px;
@@ -2194,15 +2212,6 @@ body.theme-dark .aim-note-card {
 
   .chat-panel {
     width: min(calc(100vw - 20px), 360px);
-  }
-
-  .game-timer-hud {
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
-    right: calc(env(safe-area-inset-right, 0px) + 12px);
-  }
-
-  .game-timer-pill {
-    opacity: 0.66;
   }
 
   .game-timer-pill strong {

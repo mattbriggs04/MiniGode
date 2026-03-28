@@ -108,6 +108,7 @@ export class CourseRenderer {
     this.canvas = canvas;
     this.context = canvas.getContext("2d");
     this.devicePixelRatio = window.devicePixelRatio || 1;
+    this.lastDevicePixelRatio = this.devicePixelRatio;
     this.lastScene = null;
     this.animation = null;
     this.animationQueue = [];
@@ -120,10 +121,30 @@ export class CourseRenderer {
         this.render(this.lastScene);
       }
     });
+
+    window.visualViewport?.addEventListener("resize", () => {
+      if (this.lastScene) {
+        this.render(this.lastScene);
+      }
+    });
+  }
+
+  getStage() {
+    const parent = this.canvas.parentElement;
+    if (!parent?.classList?.contains("golf-canvas-stage")) {
+      return null;
+    }
+
+    return parent;
+  }
+
+  getFrame() {
+    return this.canvas.closest(".golf-canvas-shell, .course-editor-canvas-shell") ?? this.canvas.parentElement;
   }
 
   resize(course, zoom = 1) {
-    const frame = this.canvas.parentElement;
+    const stage = this.getStage();
+    const frame = this.getFrame();
     const availableWidth = Math.floor(frame.clientWidth);
     const availableHeight = Math.floor(frame.clientHeight || course.height);
 
@@ -136,14 +157,23 @@ export class CourseRenderer {
     const scale = fitScale * Math.max(0.1, Number(zoom) || 1);
     const displayWidth = Math.max(1, Math.round(course.width * scale));
     const displayHeight = Math.max(1, Math.round(course.height * scale));
+    const devicePixelRatioChanged = Math.abs(this.devicePixelRatio - this.lastDevicePixelRatio) > 0.001;
 
-    if (displayWidth !== this.lastDisplayWidth || displayHeight !== this.lastDisplayHeight) {
+    if (displayWidth !== this.lastDisplayWidth || displayHeight !== this.lastDisplayHeight || devicePixelRatioChanged) {
       this.canvas.style.width = `${displayWidth}px`;
       this.canvas.style.height = `${displayHeight}px`;
       this.canvas.width = Math.round(displayWidth * this.devicePixelRatio);
       this.canvas.height = Math.round(displayHeight * this.devicePixelRatio);
       this.lastDisplayWidth = displayWidth;
       this.lastDisplayHeight = displayHeight;
+      this.lastDevicePixelRatio = this.devicePixelRatio;
+    }
+
+    if (stage && frame) {
+      const horizontalSlack = Math.max(availableWidth - displayWidth, 0);
+      const verticalSlack = Math.max(availableHeight - displayHeight, 0);
+      stage.style.width = `${displayWidth + horizontalSlack * 2}px`;
+      stage.style.height = `${displayHeight + verticalSlack * 2}px`;
     }
 
     this.worldScale = displayWidth / course.width;
@@ -159,14 +189,18 @@ export class CourseRenderer {
   }
 
   centerOnPoint(point, { smooth = false } = {}) {
-    const frame = this.canvas.parentElement;
+    const frame = this.getFrame();
     if (!frame || !point) {
       return;
     }
 
+    const frameBounds = frame.getBoundingClientRect();
+    const canvasBounds = this.canvas.getBoundingClientRect();
+    const canvasLeft = canvasBounds.left - frameBounds.left + frame.scrollLeft;
+    const canvasTop = canvasBounds.top - frameBounds.top + frame.scrollTop;
     const behavior = smooth ? "smooth" : "auto";
-    const targetLeft = this.canvas.offsetLeft + point.x * this.worldScale - frame.clientWidth / 2;
-    const targetTop = this.canvas.offsetTop + point.y * this.worldScale - frame.clientHeight / 2;
+    const targetLeft = canvasLeft + point.x * this.worldScale - frame.clientWidth / 2;
+    const targetTop = canvasTop + point.y * this.worldScale - frame.clientHeight / 2;
     frame.scrollTo({
       left: clamp(targetLeft, 0, Math.max(0, frame.scrollWidth - frame.clientWidth)),
       top: clamp(targetTop, 0, Math.max(0, frame.scrollHeight - frame.clientHeight)),
@@ -369,6 +403,8 @@ export class CourseRenderer {
     }
 
     this.lastScene = scene;
+    this.context.setTransform(1, 0, 0, 1, 0, 0);
+    this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.setTransform(
       this.devicePixelRatio * this.worldScale,
       0,
@@ -377,7 +413,6 @@ export class CourseRenderer {
       0,
       0
     );
-    this.context.clearRect(0, 0, scene.course.width, scene.course.height);
     this.drawCourse(scene.course);
     this.drawPreview(scene);
     this.drawPlayers(scene, now);

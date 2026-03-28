@@ -131,8 +131,8 @@
 
 .course-editor-canvas-shell {
   min-height: 0;
-  display: grid;
-  place-items: center;
+  display: block;
+  width: 100%;
   padding: 16px;
   border-radius: 24px;
   background: var(--course-frame-bg);
@@ -141,6 +141,13 @@
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
+}
+
+.course-editor-canvas-stage {
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
 }
 
 #course-editor-canvas {

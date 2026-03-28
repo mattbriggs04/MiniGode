@@ -86,7 +86,7 @@ function defineThemes(monaco) {
       rules: [
         { token: "", foreground: palette.foreground.slice(1) },
         { token: "comment", foreground: palette.comment.slice(1), fontStyle: "italic" },
-        { token: "keyword", foreground: palette.keyword.slice(1), fontStyle: "bold" },
+        { token: "keyword", foreground: palette.keyword.slice(1) },
         { token: "string", foreground: palette.string.slice(1) },
         { token: "number", foreground: palette.number.slice(1) },
         { token: "identifier", foreground: palette.identifier.slice(1) },

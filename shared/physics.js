@@ -7,9 +7,9 @@ export const MAX_SPEED = 920;
 export const SIMULATION_STEPS = 2600;
 export const TIME_STEP = 1 / 120;
 export const SPEED_BOOST_ACCELERATION = {
-  1: 90,
-  2: 160,
-  3: 240
+  1: 110,
+  2: 190,
+  3: 285
 };
 
 function clamp(value, min, max) {
@@ -277,7 +277,7 @@ export function simulateSwing({ course, ball, angle, power }) {
       path.push({ x: Number(state.x.toFixed(2)), y: Number(state.y.toFixed(2)) });
     }
 
-    if (Math.hypot(state.vx, state.vy) <= STOP_SPEED) {
+    if (!activeBoost && Math.hypot(state.vx, state.vy) <= STOP_SPEED) {
       break;
     }
   }

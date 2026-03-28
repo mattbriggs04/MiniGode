@@ -128,6 +128,30 @@ test("speed boosts carry the ball farther than the same shot on flat ground", ()
   assert.ok(boostedResult.ball.sunk);
 });
 
+test("reverse-facing speed boosts keep accelerating the ball until it gets pushed back out", () => {
+  const course = {
+    width: 560,
+    height: 240,
+    tee: { x: 80, y: 120 },
+    hole: { x: 520, y: 120, radius: 18 },
+    walls: [],
+    sandTraps: [],
+    waterHazards: [],
+    accents: [],
+    speedBoosts: [{ x: 390, y: 160, width: 160, height: 80, angle: 180, strength: 3 }]
+  };
+  const ball = createSpawnBall(course);
+  const result = simulateSwing({
+    course,
+    ball,
+    angle: 0,
+    power: 0.3
+  });
+
+  assert.ok(result.ball.x < 200);
+  assert.ok(result.path.some((point) => point.x >= 240));
+});
+
 test("progress increases when the ball moves closer to the hole", () => {
   const course = getPrimaryCourse();
   const startingBall = createSpawnBall(course);

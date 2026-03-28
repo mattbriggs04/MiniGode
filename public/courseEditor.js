@@ -11,7 +11,7 @@ const MAX_COURSE_WIDTH = 2400;
 const MAX_COURSE_HEIGHT = 1800;
 const COURSE_DIMENSION_STEP = 10;
 const GRID_SNAP_STEP = 10; // Adjust this to change the editor's snap/grid spacing.
-const ROTATION_STEP = 30;
+const ROTATION_STEP = 15;
 const COPY_BUTTON_FEEDBACK_MS = 1000;
 const GRID_MAJOR_STEP = GRID_SNAP_STEP * 5;
 const DEFAULT_HOLE_RADIUS = 18;
@@ -789,7 +789,7 @@ function renderSelectionPanel() {
       </label>
       <label>
         Angle
-        <input data-selection-field="angle" type="number" min="0" max="330" step="${ROTATION_STEP}" value="${entity.angle ?? 0}">
+        <input data-selection-field="angle" type="number" min="0" max="${360 - ROTATION_STEP}" step="${ROTATION_STEP}" value="${entity.angle ?? 0}">
       </label>
       ${
         state.selectedTarget.type === "speedBoosts"
@@ -803,7 +803,7 @@ function renderSelectionPanel() {
       }
     </div>
     <div class="course-editor-actions-row">
-      <button id="rotate-selected-btn" type="button" class="secondary">Rotate 30°</button>
+      <button id="rotate-selected-btn" type="button" class="secondary">Rotate ${ROTATION_STEP}°</button>
       <button id="duplicate-selected-btn" type="button" class="secondary">Duplicate selected</button>
       <button id="delete-selected-btn" type="button" class="ghost-inline">Delete selected</button>
     </div>

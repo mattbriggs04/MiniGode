@@ -392,6 +392,13 @@ function isEditableElement(node) {
   return tagName === "input" || tagName === "textarea" || tagName === "select";
 }
 
+function blurActiveEditableElement() {
+  const activeElement = document.activeElement;
+  if (isEditableElement(activeElement)) {
+    activeElement.blur();
+  }
+}
+
 function loadStoredDraft() {
   const stored = loadStorage(DRAFT_STORAGE_KEY);
   return stored ? normalizeCourse(stored) : null;
@@ -565,6 +572,43 @@ function clampRectPosition(rect, course) {
     },
     course.width,
     course.height
+  );
+}
+
+function getRectCenter(rect) {
+  const centerOffset = rotateVector(
+    {
+      x: rect.width / 2,
+      y: rect.height / 2
+    },
+    rect.angle ?? 0
+  );
+
+  return {
+    x: rect.x + centerOffset.x,
+    y: rect.y + centerOffset.y
+  };
+}
+
+function rotateRectAboutCenter(rect, nextAngle, course) {
+  const centerPoint = getRectCenter(rect);
+  const normalizedAngle = normalizeAngleDegrees(nextAngle);
+  const nextOriginOffset = rotateVector(
+    {
+      x: rect.width / 2,
+      y: rect.height / 2
+    },
+    normalizedAngle
+  );
+
+  return clampRectPosition(
+    {
+      ...rect,
+      angle: normalizedAngle,
+      x: centerPoint.x - nextOriginOffset.x,
+      y: centerPoint.y - nextOriginOffset.y
+    },
+    course
   );
 }
 
@@ -1011,23 +1055,24 @@ function updateSelectedField(fieldName, value) {
     return;
   }
 
-  const nextValue =
-    state.gridModeEnabled && ["x", "y", "width", "height"].includes(fieldName)
-      ? snapCoordinate(value)
-      : value;
-
   updateCourse((draft) => {
     if (state.selectedTarget.type === "tee" || state.selectedTarget.type === "hole") {
-      draft[state.selectedTarget.type][fieldName] = nextValue;
+      draft[state.selectedTarget.type][fieldName] = value;
       return;
     }
 
     const collection = draft[state.selectedTarget.type];
-    if (!collection?.[state.selectedTarget.index]) {
+    const rect = collection?.[state.selectedTarget.index];
+    if (!rect) {
       return;
     }
 
-    collection[state.selectedTarget.index][fieldName] = nextValue;
+    if (fieldName === "angle") {
+      Object.assign(rect, rotateRectAboutCenter(rect, value, draft));
+      return;
+    }
+
+    rect[fieldName] = value;
   }, `Updated ${describeSelectedTarget().toLowerCase()}.`);
 }
 
@@ -1082,30 +1127,13 @@ function rotateSelectedTarget() {
     return;
   }
 
-  const original = getSelectedEntity();
-  if (!original) {
-    return;
-  }
-
   updateCourse((draft) => {
     const rect = draft[collectionName]?.[state.selectedTarget.index];
     if (!rect) {
       return;
     }
 
-    const currentAngle = normalizeAngleDegrees(rect.angle);
-    const centerOffset = rotateVector({ x: rect.width / 2, y: rect.height / 2 }, currentAngle);
-    const centerPoint = {
-      x: rect.x + centerOffset.x,
-      y: rect.y + centerOffset.y
-    };
-    const nextAngle = normalizeAngleDegrees(currentAngle + ROTATION_STEP);
-    const nextOriginOffset = rotateVector({ x: rect.width / 2, y: rect.height / 2 }, nextAngle);
-    rect.angle = nextAngle;
-    rect.x = centerPoint.x - nextOriginOffset.x;
-    rect.y = centerPoint.y - nextOriginOffset.y;
-    const clampedRect = clampRectPosition(rect, draft);
-    Object.assign(rect, clampedRect);
+    Object.assign(rect, rotateRectAboutCenter(rect, (rect.angle ?? 0) + ROTATION_STEP, draft));
   }, `${describeSelectedTarget()} rotated.`);
 
   renderSelectionPanel();
@@ -1300,6 +1328,7 @@ function onCanvasPointerDown(event) {
     return;
   }
 
+  blurActiveEditableElement();
   const point = getWorldPoint(event);
   state.pointerWorld = point;
   updatePointerLabel();
@@ -1393,6 +1422,7 @@ function onToolbarClick(event) {
     return;
   }
 
+  blurActiveEditableElement();
   const toolId = button.dataset.tool;
   if (!TOOL_DEFINITIONS.some((tool) => tool.id === toolId)) {
     return;
@@ -1409,6 +1439,7 @@ function onObjectListClick(event) {
     return;
   }
 
+  blurActiveEditableElement();
   const target = {
     type: button.dataset.targetType
   };
@@ -1418,13 +1449,83 @@ function onObjectListClick(event) {
   selectTarget(target);
 }
 
-function onSelectionPanelInput(event) {
+function normalizeSelectionFieldInput(input) {
+  const fieldName = input.dataset.selectionField;
+  const entity = getSelectedEntity();
+  if (!entity) {
+    return null;
+  }
+
+  const fallback = entity[fieldName];
+  if (fallback === undefined) {
+    return null;
+  }
+
+  if (input.value === "") {
+    return fallback;
+  }
+
+  if (fieldName === "angle") {
+    return normalizeAngleDegrees(input.value);
+  }
+
+  if (fieldName === "strength") {
+    return normalizeStrength(input.value);
+  }
+
+  const step = Number(input.step);
+  const min = input.min === "" ? Number.NEGATIVE_INFINITY : Number(input.min);
+  const max = input.max === "" ? Number.POSITIVE_INFINITY : Number(input.max);
+
+  return normalizeStepValue(
+    input.value,
+    Number.isFinite(min) ? min : Number.NEGATIVE_INFINITY,
+    Number.isFinite(max) ? max : Number.POSITIVE_INFINITY,
+    Number.isFinite(step) && step > 0 ? step : 1,
+    fallback
+  );
+}
+
+function commitSelectionFieldInput(input) {
+  if (!input?.dataset.selectionField) {
+    return;
+  }
+
+  const nextValue = normalizeSelectionFieldInput(input);
+  if (nextValue === null) {
+    return;
+  }
+
+  updateSelectedField(input.dataset.selectionField, nextValue);
+}
+
+function onSelectionPanelChange(event) {
   const input = event.target.closest("[data-selection-field]");
   if (!input) {
     return;
   }
 
-  updateSelectedField(input.dataset.selectionField, Number(input.value));
+  commitSelectionFieldInput(input);
+}
+
+function onSelectionPanelFocusOut(event) {
+  const input = event.target.closest("[data-selection-field]");
+  if (!input) {
+    return;
+  }
+
+  commitSelectionFieldInput(input);
+}
+
+function onSelectionPanelKeyDown(event) {
+  const input = event.target.closest("[data-selection-field]");
+  if (!input || event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  commitSelectionFieldInput(input);
+  input.blur();
 }
 
 function onSelectionPanelClick(event) {
@@ -1502,7 +1603,7 @@ function onToggleGridMode() {
 }
 
 function onWindowKeyDown(event) {
-  if (isEditableElement(event.target)) {
+  if (isEditableElement(document.activeElement)) {
     return;
   }
 
@@ -1652,7 +1753,9 @@ function bindEvents() {
     input.addEventListener("keydown", onCourseDimensionKeyDown);
   });
 
-  elements.selectionPanel.addEventListener("input", onSelectionPanelInput);
+  elements.selectionPanel.addEventListener("change", onSelectionPanelChange);
+  elements.selectionPanel.addEventListener("focusout", onSelectionPanelFocusOut);
+  elements.selectionPanel.addEventListener("keydown", onSelectionPanelKeyDown);
   elements.selectionPanel.addEventListener("click", onSelectionPanelClick);
   elements.objectList.addEventListener("click", onObjectListClick);
 

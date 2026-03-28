@@ -1,31 +1,23 @@
 const courseCatalog = [
     {
-      id: "test-course-2",
-      name: "Test Course 2",
-      description: "Wide Course.",
-      width: 2000,
-      height: 380,
-      tee: { x: 100, y: 200 },
-      hole: { x: 1850, y: 200, radius: 18 },
+      id: "speed-test",
+      name: "Speed Test",
+      description: "testing the speed boost",
+      width: 960,
+      height: 540,
+      tee: { x: 122, y: 270 },
+      hole: { x: 838, y: 270, radius: 18 },
       walls: [],
       sandTraps: [],
       waterHazards: [],
       accents: [],
-      speedBoosts: []
-    },
-    {
-      id: "test-course-1",
-      name: "Test Course 1",
-      description: "Tall course.",
-      width: 450,
-      height: 1080,
-      tee: { x: 230, y: 990 },
-      hole: { x: 230, y: 150, radius: 18 },
-      walls: [],
-      sandTraps: [],
-      waterHazards: [],
-      accents: [],
-      speedBoosts: []
+      speedBoosts: [
+      { x: 460, y: 290, width: 180, height: 50, angle: 165, strength: 1 },
+      { x: 243, y: 415, width: 110, height: 70, angle: 345, strength: 2 },
+      { x: 250, y: 40, width: 320, height: 60, strength: 1 },
+      { x: 260, y: 120, width: 40, height: 70, strength: 3 },
+      { x: 590, y: 460, width: 110, height: 130, angle: 270, strength: 3 }
+    ]
     },
     {
       id: "sandy-isle",

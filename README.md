@@ -24,10 +24,21 @@ The full implementation plan is in [docs/stack-plan.md](/Users/matthew/Projects/
 ## Run
 
 ```bash
+npm install
 npm start
 ```
 
+If you already have a lockfile-respecting workflow, `npm ci` works as well. Monaco is served directly from `node_modules`, so there is no separate editor build step.
+
 By default the server prefers `http://localhost:3000` and will fall forward to the next open port if `3000` is already taken. To force a specific port, set `PORT`.
+
+## LAN Run
+
+```bash
+./scripts/run_lan.sh
+```
+
+This script is intended for fresh clones. It installs npm dependencies on first run if needed, starts the stable non-watch server on `0.0.0.0:3000`, and still respects `HOST` / `PORT` overrides.
 
 ## Scripts
 

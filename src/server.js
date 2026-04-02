@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getCourseCatalog } from "./data/courses.js";
+import { assertRuntimeDependencies } from "./lib/runtimeDependencies.js";
 import {
   createAppError,
   advanceQuestion,
@@ -23,9 +24,10 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const publicDirectory = path.resolve(__dirname, "../public");
-const sharedDirectory = path.resolve(__dirname, "../shared");
-const monacoDirectory = path.resolve(__dirname, "../node_modules/monaco-editor/min");
+const projectRootDirectory = path.resolve(__dirname, "..");
+const publicDirectory = path.resolve(projectRootDirectory, "public");
+const sharedDirectory = path.resolve(projectRootDirectory, "shared");
+const monacoDirectory = path.resolve(projectRootDirectory, "node_modules/monaco-editor/min");
 
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -382,5 +384,12 @@ function startServer(preferredPort, host, allowFallback) {
 const requestedPort = parseRequestedPort(process.env.PORT);
 const requestedHost = parseRequestedHost(process.env.HOST);
 const preferredPort = requestedPort ?? DEFAULT_PORT;
+
+try {
+  assertRuntimeDependencies({ projectRoot: projectRootDirectory });
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 
 startServer(preferredPort, requestedHost, requestedPort === null);
